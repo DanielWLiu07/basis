@@ -16,22 +16,38 @@ for low internal latency and zero message loss.
 
 ## Status
 
-Early scaffold (Phase 0 of 6). The build, layering, test harness, and CI are in
-place; the engine itself is being built phase by phase. See `PLAN.md` for the
-full spec and the phase schedule.
+The offline engine runs end to end: real venue wire formats are parsed,
+normalized into per-event unified books, and measured for basis, lead-lag,
+and per-record ingest-to-signal latency, all driven by deterministic replay.
+Live WebSocket adapters are the next phase; they slot in behind the same
+`FeedAdapter` seam. See `PLAN.md` for the full spec and `docs/design.md` for
+how the code is put together.
 
-## Build
+## Build and run
 
 ```
 cmake -B build -G Ninja
 cmake --build build -j
-./build/src/basis
 ctest --test-dir build --output-on-failure
 ```
 
-The Phase-0 configure pulls only GoogleTest. Live feeds, the BDE allocator
-path, and the benchmark come online behind CMake options (`BASIS_ENABLE_NET`,
-`BASIS_ENABLE_BDE`, `BASIS_ENABLE_BENCH`) as their phases land.
+Try it without any credentials or network: generate a synthetic session with
+a known injected cross-venue lead, then replay it through the full pipeline
+and watch the engine report that lead back.
+
+```
+./build/src/basis synth captures/demo.feedlog --steps 5000 --lead-ms 400
+./build/src/basis replay captures/demo.feedlog
+```
+
+The replay prints message accounting (nothing is ever silently dropped),
+per-event basis statistics, the recovered lead, and ingest-to-signal latency
+percentiles. The same closed loop runs in the test suite: if the engine
+cannot recover an injected lead through the real parsers, the build is red.
+
+The configure pulls GoogleTest and simdjson. Live feeds and the BDE
+allocator path come online behind CMake options (`BASIS_ENABLE_NET`,
+`BASIS_ENABLE_BDE`) as their phases land.
 
 ## Design at a glance
 
@@ -56,17 +72,17 @@ only market data here comes from Kalshi's and Polymarket's public APIs.
 ## Layout
 
 ```
-src/core/       logging, time, version
-src/model/      canonical schema: venue, side, order book, deltas
-src/net/        WebSocket client (Phase 1)
-src/feed/       venue feed adapters: Kalshi, Polymarket (Phase 1/2)
-src/normalize/  unified schema + cross-venue contract registry (Phase 3)
-src/analytics/  divergence and lead-lag (Phase 5)
-src/api/        BLPAPI-style subscription interface (Phase 6)
-src/bench/      replay harness + latency histogram (Phase 4)
-tests/          GoogleTest unit and property tests
-configs/        contract registry
-docs/bench/     committed captures and the numbers they produce
+src/core/       logging, clocks, version
+src/model/      canonical schema: venue, side, order book, unified book
+src/feed/       venue parsers (Kalshi, Polymarket) + feedlog capture format
+src/normalize/  cross-venue contract registry + event router
+src/analytics/  divergence and cross-correlation lead-lag
+src/api/        BLPAPI-style subscription interface
+src/bench/      replay harness, latency recorder, synthetic sessions
+src/net/        WebSocket client (next phase, live feeds)
+tests/          GoogleTest unit and integration tests
+configs/        contract registries (real + synthetic)
+docs/           design notes, venue API notes, benchmark artifacts
 ```
 
 ## Numbers
