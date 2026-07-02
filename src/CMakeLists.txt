@@ -6,7 +6,9 @@
 #   basis_analytics <- basis_model
 #   basis_api       <- basis_model
 #   basis_bench     <- feed + normalize + analytics + api (composition root)
-#   basis (exe)     <- basis_bench
+#   basis_net       <- basis_core (+ Boost.Beast, OpenSSL; BASIS_ENABLE_NET)
+#   basis_feed_live <- basis_feed + basis_net (BASIS_ENABLE_NET)
+#   basis (exe)     <- basis_bench (+ basis_feed_live when NET)
 
 add_library(basis_core
   core/logger.cpp
@@ -53,3 +55,13 @@ target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
 
 add_executable(basis main.cpp)
 target_link_libraries(basis PRIVATE basis_bench)
+
+# Live feeds: only with BASIS_ENABLE_NET, so the default build needs
+# neither Boost nor OpenSSL.
+if(BASIS_ENABLE_NET)
+  add_library(basis_net
+    net/ws_client.cpp
+  )
+  target_link_libraries(basis_net PUBLIC basis_core
+    Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+endif()

@@ -29,13 +29,14 @@ get_target_property(_simdjson_includes simdjson INTERFACE_INCLUDE_DIRECTORIES)
 set_target_properties(simdjson PROPERTIES
   INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_simdjson_includes}")
 
-# Phase 1: live WSS feeds. Wired when BASIS_ENABLE_NET is set.
-#   - OpenSSL (system) for wss://
-#   - Boost.Beast for the WebSocket client
+# Live WSS feeds, behind BASIS_ENABLE_NET: OpenSSL (system) for wss:// and
+# Boost.Beast (header-only, system Boost) for the WebSocket client. System
+# packages rather than FetchContent: Boost is far too heavy to vendor.
 if(BASIS_ENABLE_NET)
-  message(STATUS "[basis] NET enabled: add OpenSSL + Boost.Beast here (Phase 1)")
-  # find_package(OpenSSL REQUIRED)
-  # find_package(Boost 1.80 REQUIRED)
+  find_package(OpenSSL REQUIRED)
+  find_package(Boost 1.80 REQUIRED CONFIG)
+  find_package(Threads REQUIRED)
+  message(STATUS "[basis] NET enabled: Boost ${Boost_VERSION}, OpenSSL ${OPENSSL_VERSION}")
 endif()
 
 # Phase 3: Bloomberg BDE allocators (bdlma) for the normalize hot path.
