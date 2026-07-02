@@ -15,6 +15,7 @@ target_link_libraries(basis_core PUBLIC basis_warnings basis_sanitize)
 
 add_library(basis_model
   model/order_book.cpp
+  model/unified_book.cpp
 )
 target_link_libraries(basis_model PUBLIC basis_core)
 
