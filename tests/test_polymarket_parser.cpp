@@ -103,6 +103,47 @@ TEST(PolymarketParser, TinyFractionalSizeDoesNotVanish) {
   EXPECT_EQ(r.deltas[0].size, 1);
 }
 
+TEST(PolymarketParser, HugeOrOutOfRangeNumbersAreMalformedNotUB) {
+  PolymarketParser p;
+  // Digit-cap: this would overflow int64 accumulation.
+  EXPECT_EQ(p.parse(R"({
+    "event_type": "price_change", "market": "0x1",
+    "price_changes": [{"asset_id": "t",
+      "price": "99999999999999999999999999", "size": "1", "side": "BUY"}]
+  })", 0).status, ParseStatus::Malformed);
+  // Fits int64 but is not a probability: must not wrap into a fake level.
+  EXPECT_EQ(p.parse(R"({
+    "event_type": "price_change", "market": "0x1",
+    "price_changes": [{"asset_id": "t",
+      "price": "40000000", "size": "1", "side": "BUY"}]
+  })", 0).status, ParseStatus::Malformed);
+}
+
+TEST(PolymarketParser, BoundaryPricesZeroAndOneAreAccepted) {
+  PolymarketParser p;
+  const auto r = p.parse(R"({
+    "event_type": "price_change", "market": "0x1",
+    "price_changes": [
+      {"asset_id": "t", "price": "0.00", "size": "10", "side": "BUY"},
+      {"asset_id": "t", "price": "1.00", "size": "10", "side": "SELL"}
+    ]
+  })", 0);
+  ASSERT_EQ(r.status, ParseStatus::Ok);
+  EXPECT_EQ(r.deltas[0].price_cents, 0);
+  EXPECT_EQ(r.deltas[1].price_cents, 100);
+}
+
+TEST(PolymarketParser, WrongTypedBookSideIsMalformedNotEmpty) {
+  PolymarketParser p;
+  const auto r = p.parse(R"({
+    "event_type": "book", "asset_id": "t",
+    "bids": "oops",
+    "asks": [{"price": "0.46", "size": "1"}]
+  })", 0);
+  EXPECT_EQ(r.status, ParseStatus::Malformed);
+  EXPECT_TRUE(r.deltas.empty());
+}
+
 TEST(PolymarketParser, IgnoresUnknownEventsAndFlagsMalformed) {
   PolymarketParser p;
   EXPECT_EQ(p.parse(R"({"event_type": "last_trade_price"})", 0).status,

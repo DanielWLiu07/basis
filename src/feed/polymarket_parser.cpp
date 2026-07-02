@@ -7,6 +7,7 @@ namespace basis::feed {
 
 namespace {
 
+using simdjson::NO_SUCH_FIELD;
 using simdjson::SUCCESS;
 using simdjson::dom::array;
 using simdjson::dom::element;
@@ -21,8 +22,12 @@ std::optional<std::int64_t> parse_scaled_decimal(std::string_view s,
   if (s.empty()) return std::nullopt;
   std::int64_t value = 0;  // integer part
   std::size_t i = 0;
+  int digits = 0;
   for (; i < s.size() && s[i] != '.'; ++i) {
     if (s[i] < '0' || s[i] > '9') return std::nullopt;
+    // No real probability or size needs 16 integer digits; past that the
+    // arithmetic below would overflow, so it is malformed, not big.
+    if (++digits > 15) return std::nullopt;
     value = value * 10 + (s[i] - '0');
   }
   value *= scale;
@@ -45,9 +50,12 @@ std::optional<std::int64_t> parse_scaled_decimal(std::string_view s,
   return value;
 }
 
+// Polymarket prices are probabilities, so the only valid cent range is
+// 0..100. Rejecting here (on the wide int64, before narrowing) is what
+// keeps a corrupt price from wrapping into a plausible-looking level.
 std::optional<int> parse_price_cents(std::string_view s) {
   const auto v = parse_scaled_decimal(s, 100);
-  if (!v) return std::nullopt;
+  if (!v || *v < 0 || *v > 100) return std::nullopt;
   return static_cast<int>(*v);
 }
 
@@ -66,9 +74,13 @@ std::optional<std::int64_t> parse_size(std::string_view s) {
 bool append_book_side(const element& event, const char* key, model::Side side,
                       const model::BookDelta& base,
                       std::vector<model::BookDelta>& out) {
-  array levels;
-  if (event[key].get_array().get(levels) != SUCCESS) {
+  const auto field = event[key];
+  if (field.error() == NO_SUCH_FIELD) {
     return true;  // absent side is a legal empty book
+  }
+  array levels;
+  if (field.get_array().get(levels) != SUCCESS) {
+    return false;  // present but not an array: corrupt, not empty
   }
   for (const element level : levels) {
     std::string_view price_s;
