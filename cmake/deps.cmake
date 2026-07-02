@@ -8,6 +8,13 @@ if(BASIS_BUILD_TESTS)
     GIT_TAG        v1.15.2)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
+  foreach(_gt_target gtest gtest_main gmock gmock_main)
+    if(TARGET ${_gt_target})
+      get_target_property(_gt_includes ${_gt_target} INTERFACE_INCLUDE_DIRECTORIES)
+      set_target_properties(${_gt_target} PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_gt_includes}")
+    endif()
+  endforeach()
 endif()
 
 # simdjson is always on: the feed parsers are the heart of the offline replay
@@ -17,6 +24,10 @@ FetchContent_Declare(simdjson
   GIT_REPOSITORY https://github.com/simdjson/simdjson.git
   GIT_TAG        v3.10.1)
 FetchContent_MakeAvailable(simdjson)
+# Third-party headers are not ours to fix; keep them out of our -W set.
+get_target_property(_simdjson_includes simdjson INTERFACE_INCLUDE_DIRECTORIES)
+set_target_properties(simdjson PROPERTIES
+  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_simdjson_includes}")
 
 # Phase 1: live WSS feeds. Wired when BASIS_ENABLE_NET is set.
 #   - OpenSSL (system) for wss://
