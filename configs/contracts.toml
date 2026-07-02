@@ -1,29 +1,114 @@
 # Cross-venue contract registry: maps each venue's native market id to a
-# shared, venue-neutral event id, so the same real-world outcome on Kalshi and
-# Polymarket lands in one unified book.
+# shared, venue-neutral event id, so the same real-world outcome on Kalshi
+# and Polymarket lands in one unified book.
 #
-# Phase 3 reads this file. Auto fuzzy-matching is a stretch goal; starting
-# explicit keeps the matching correct and auditable.
-#
-# Identifiers (validated 2026-06, see docs/api_integration.md):
-#   kalshi          = Kalshi market_ticker (subscribe key)
-#   polymarket_token = Polymarket YES-outcome token id (asset_id, subscribe key)
+# Identifiers (docs/api_integration.md):
+#   kalshi            = Kalshi market_ticker (subscribe key)
+#   polymarket_token  = Polymarket YES-outcome token id (asset_id, subscribe key)
 #   polymarket_market = Polymarket condition id (0x...), for reference
 #
-# The kalshi tickers are illustrative; the polymarket ids are commented out
-# until the real token ids are confirmed from the live feed, because the
-# registry treats every uncommented mapping as live and rejects duplicates.
+# Ids below were pulled from both venues' public REST APIs on 2026-07-02
+# (Kalshi: series KXMENWORLDCUP / KXFEDDECISION; Polymarket: gamma-api,
+# sorted by 24h volume). Matching was done on the exact outcome wording.
+
+# --- Fed decision, July 2026 meeting (macro; both venues quote the same
+# outcomes: Kalshi H0 "maintains rate" = Polymarket "no change") ---
 
 [[event]]
-id = "fed-cut-2026-09"
-description = "Fed cuts rates at the September 2026 meeting"
-kalshi = "FED-26SEP-CUT"
-# polymarket_token = "<YES_TOKEN_ID>"
-# polymarket_market = "0x<CONDITION_ID>"
+id = "fed-2026-07-cut-25"
+description = "Fed cuts rates by 25 bps at the July 2026 meeting"
+kalshi = "KXFEDDECISION-26JUL-C25"
+polymarket_token = "107111506004559425167535337910569809007100298896139468418632748246491535011700"
 
 [[event]]
-id = "us-pres-2028-dem"
-description = "Democratic nominee wins the 2028 US presidential election"
-kalshi = "PRES-2028-DEM"
-# polymarket_token = "<YES_TOKEN_ID>"
-# polymarket_market = "0x<CONDITION_ID>"
+id = "fed-2026-07-no-change"
+description = "Fed leaves rates unchanged at the July 2026 meeting"
+kalshi = "KXFEDDECISION-26JUL-H0"
+polymarket_token = "111604417349377875799825956621596386269673370070912696668140891647145772186047"
+
+# --- 2026 FIFA World Cup winner (sports; the tournament runs June-July
+# 2026, so these books are live and busy on both venues) ---
+
+[[event]]
+id = "wc26-winner-mexico"
+description = "Mexico wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-MX"
+polymarket_token = "22587775301869146748237913050505932485648958481571808324285560650057390882036"
+polymarket_market = "0x5ccfe1b69a582d2985db08a8481a0d74c314b1fce9b4711ae2efb2c6467fe6aa"
+
+[[event]]
+id = "wc26-winner-usa"
+description = "USA wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-US"
+polymarket_token = "94603648636330087039501304492699481091005420017442244191603206509188088089447"
+polymarket_market = "0xcdb1f0400949238a63d3e88243d2ada08cd9c2a71985ced9f0cfd5e66354cf90"
+
+[[event]]
+id = "wc26-winner-england"
+description = "England wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-GB"
+polymarket_token = "115556263888245616435851357148058235707004733438163639091106356867234218207169"
+polymarket_market = "0x375409bc5eeeff961e82b479caeccc20f33d15738e5bce1186d628aa3d9dfb1f"
+
+[[event]]
+id = "wc26-winner-brazil"
+description = "Brazil wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-BR"
+polymarket_token = "27576533317283401577758999384642760405921738493660383550832555714312627457443"
+polymarket_market = "0x30d55d8124ee1e12dabe89201badc45669b81dff69e4ce44d961f32878ec178a"
+
+[[event]]
+id = "wc26-winner-france"
+description = "France wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-FR"
+polymarket_token = "108233603819467706476318984012158651931658302669301887462181073562758483842092"
+polymarket_market = "0x9b6fef249040fd17e9c107955b37ac2c3e923509b6b0ff01cc463a331ddeb894"
+
+[[event]]
+id = "wc26-winner-argentina"
+description = "Argentina wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-AR"
+polymarket_token = "18812649149814341758733697580460697418474693998558159483117100240528657629879"
+polymarket_market = "0x0c4cd2055d6ea89354ffddc55d6dbcef9355748112ea952fc925f3db6a5c457f"
+
+[[event]]
+id = "wc26-winner-spain"
+description = "Spain wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-ES"
+polymarket_token = "4394372887385518214471608448209527405727552777602031099972143344338178308080"
+polymarket_market = "0x7976b8dbacf9077eb1453a62bcefd6ab2df199acd28aad276ff0d920d6992892"
+
+[[event]]
+id = "wc26-winner-portugal"
+description = "Portugal wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-PT"
+polymarket_token = "45415751658241142530386585138386640503488308219341470020075667342738719018629"
+polymarket_market = "0x4f3421fb2daf5cca7430ed8d8132463963081572d75434393a1808fdb8829fe8"
+
+[[event]]
+id = "wc26-winner-belgium"
+description = "Belgium wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-BE"
+polymarket_token = "30815807067456631524510535002617106205417832891402132396713720656146245200000"
+polymarket_market = "0x32cfa52198e85e070d1b17d1b53c5c3a6aaae7736cdc33fa6aa04d353f0c2811"
+
+[[event]]
+id = "wc26-winner-morocco"
+description = "Morocco wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-MA"
+polymarket_token = "69910730841487615802736046038473620030754616421912831175284551372639933569112"
+polymarket_market = "0x37a6de1b21803e5f3fb1965116218215d79963af4f7e51659696366267a63a03"
+
+[[event]]
+id = "wc26-winner-ghana"
+description = "Ghana wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-GH"
+polymarket_token = "43907673646206657865778036957293730446366626078011238443367990170655175896145"
+polymarket_market = "0x881a3ffa618b6ae0ab95a5637e310afb1afc2d99c921bfe3235b15eccfce0344"
+
+[[event]]
+id = "wc26-winner-norway"
+description = "Norway wins the 2026 FIFA World Cup"
+kalshi = "KXMENWORLDCUP-26-NO"
+polymarket_token = "60447443643099453130956385288904175887233107411078568881602330835010340506057"
+polymarket_market = "0x7b52405ad0e0d31bfe970940b67d77f24ecedeab8a2361c11148c02a006e325c"
