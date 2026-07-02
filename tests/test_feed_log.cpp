@@ -61,6 +61,38 @@ TEST(FeedLog, MalformedLinesAreCountedAndSkipped) {
   EXPECT_EQ(r.malformed_lines(), 3u);
 }
 
+TEST(FeedLog, NegativeTimestampIsMalformed) {
+  const auto path = temp_path("negative-ts.feedlog");
+  {
+    std::ofstream out(path);
+    out << "-5\tkalshi\t{}\n";
+    out << "5\tkalshi\t{}\n";
+  }
+  FeedLogReader r(path);
+  const auto rec = r.next();
+  ASSERT_TRUE(rec.has_value());
+  EXPECT_EQ(rec->recv_ns, 5);
+  EXPECT_EQ(r.malformed_lines(), 1u);
+}
+
+TEST(FeedLog, OverlongLineIsCountedAndSkipped) {
+  const auto path = temp_path("overlong.feedlog");
+  {
+    std::ofstream out(path);
+    // One hostile line well past the reader's bound must not balloon
+    // memory or end the replay; the next record still parses.
+    out << "1\tkalshi\t" << std::string(2 * FeedLogReader::kMaxLineBytes, 'x')
+        << "\n";
+    out << "2\tpolymarket\t{}\n";
+  }
+  FeedLogReader r(path);
+  const auto rec = r.next();
+  ASSERT_TRUE(rec.has_value());
+  EXPECT_EQ(rec->recv_ns, 2);
+  EXPECT_FALSE(r.next().has_value());
+  EXPECT_EQ(r.malformed_lines(), 1u);
+}
+
 TEST(FeedLog, WriterRejectsUnframablePayload) {
   const auto path = temp_path("reject.feedlog");
   FeedLogWriter w(path);
