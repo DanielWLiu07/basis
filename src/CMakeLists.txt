@@ -18,6 +18,7 @@ target_link_libraries(basis_model PUBLIC basis_core)
 
 add_library(basis_feed
   feed/kalshi_parser.cpp
+  feed/polymarket_parser.cpp
 )
 target_link_libraries(basis_feed PUBLIC basis_model simdjson)
 
