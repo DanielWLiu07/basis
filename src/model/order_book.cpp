@@ -1,5 +1,7 @@
 #include "model/order_book.h"
 
+#include <limits>
+
 namespace basis::model {
 
 void OrderBook::apply(const BookDelta& delta) {
@@ -11,7 +13,18 @@ void OrderBook::apply(const BookDelta& delta) {
     std::int64_t size = delta.size;
     if (delta.action == Action::Add) {
       if (const auto it = book_side.find(delta.price_cents); it != book_side.end()) {
-        size += it->second;
+        // Saturate instead of overflowing: a feed corrupt enough to push a
+        // level past int64 must not turn into undefined behavior.
+        constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+        constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+        const std::int64_t existing = it->second;
+        if (size > 0 && existing > kMax - size) {
+          size = kMax;
+        } else if (size < 0 && existing < kMin - size) {
+          size = kMin;  // <= 0, removed below
+        } else {
+          size += existing;
+        }
       }
     }
     if (size <= 0) {
