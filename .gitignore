@@ -1,0 +1,23 @@
+# Build output
+/build/
+/build-*/
+/out/
+cmake-build-*/
+
+# Compile DB symlink (generated)
+/compile_commands.json
+
+# Recorded feed captures and benchmark scratch (large, regenerated)
+/captures/
+*.feedlog
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local secrets: API keys for Kalshi/Polymarket never get committed
+.env
+*.local.toml
+secrets/

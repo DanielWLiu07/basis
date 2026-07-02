@@ -1,0 +1,28 @@
+# Cross-venue contract registry: maps each venue's native market id to a
+# shared, venue-neutral event id, so the same real-world outcome on Kalshi and
+# Polymarket lands in one unified book.
+#
+# Phase 3 reads this file. Auto fuzzy-matching is a stretch goal; starting
+# explicit keeps the matching correct and auditable.
+#
+# Identifiers (validated 2026-06, see docs/api_integration.md):
+#   kalshi          = Kalshi market_ticker (subscribe key)
+#   polymarket_token = Polymarket YES-outcome token id (asset_id, subscribe key)
+#   polymarket_market = Polymarket condition id (0x...), for reference
+#
+# These ids are illustrative placeholders. Real ids get filled in once the
+# feeds are live and the overlapping markets are confirmed.
+
+[[event]]
+id = "fed-cut-2026-09"
+description = "Fed cuts rates at the September 2026 meeting"
+kalshi = "FED-26SEP-CUT"
+polymarket_token = "<YES_TOKEN_ID>"
+polymarket_market = "0x<CONDITION_ID>"
+
+[[event]]
+id = "us-pres-2028-dem"
+description = "Democratic nominee wins the 2028 US presidential election"
+kalshi = "PRES-2028-DEM"
+polymarket_token = "<YES_TOKEN_ID>"
+polymarket_market = "0x<CONDITION_ID>"
