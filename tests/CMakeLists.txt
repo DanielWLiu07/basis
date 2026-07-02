@@ -13,6 +13,7 @@ add_executable(basis_tests
   test_session.cpp
   test_latency_recorder.cpp
   test_replay_harness.cpp
+  test_synth_generator.cpp
 )
 target_link_libraries(basis_tests PRIVATE basis_bench GTest::gtest_main)
 # Lets tests load checked-in configs relative to the repo, not the build dir.
