@@ -67,7 +67,10 @@ int run_synth(const std::vector<std::string_view>& args) {
                                   config.lead_ns / 1'000'000);
   const auto seed = flag_value(args, "--seed",
                                static_cast<std::int64_t>(config.seed));
-  if (!steps || !lead_ms || !seed || *steps <= 0) {
+  // Bounds double as narrowing guards for the casts below.
+  if (!steps || *steps <= 0 || *steps > 100'000'000 ||
+      !lead_ms || *lead_ms < -86'400'000 || *lead_ms > 86'400'000 ||
+      !seed || *seed < 0 || *seed > 4'294'967'295) {
     basis::log::error("synth: bad flag value");
     return usage();
   }
