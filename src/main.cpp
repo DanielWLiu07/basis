@@ -25,8 +25,10 @@ int main() {
   // Phase-0 self-check: the canonical OrderBook applies deltas and computes a
   // midpoint. This is the seed the rest of the engine is built around.
   model::OrderBook book;
-  book.apply({model::Venue::Kalshi, "PRES-2028-DEM", model::Side::Bid, 47, 1200, 1, 0});
-  book.apply({model::Venue::Kalshi, "PRES-2028-DEM", model::Side::Ask, 49, 800, 2, 0});
+  book.apply({.venue = model::Venue::Kalshi, .market = "PRES-2028-DEM",
+              .side = model::Side::Bid, .price_cents = 47, .size = 1200});
+  book.apply({.venue = model::Venue::Kalshi, .market = "PRES-2028-DEM",
+              .side = model::Side::Ask, .price_cents = 49, .size = 800});
   if (const auto m = book.mid()) {
     std::printf("  self-check mid %.1fc (expect 48.0c)\n", *m);
   }

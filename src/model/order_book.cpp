@@ -3,17 +3,27 @@
 namespace basis::model {
 
 void OrderBook::apply(const BookDelta& delta) {
-  auto set_level = [](auto& book, int price, std::int64_t size) {
+  if (delta.action == Action::Clear) {
+    clear();
+    return;
+  }
+  const auto apply_to = [&delta](auto& book_side) {
+    std::int64_t size = delta.size;
+    if (delta.action == Action::Add) {
+      if (const auto it = book_side.find(delta.price_cents); it != book_side.end()) {
+        size += it->second;
+      }
+    }
     if (size <= 0) {
-      book.erase(price);
+      book_side.erase(delta.price_cents);
     } else {
-      book[price] = size;
+      book_side[delta.price_cents] = size;
     }
   };
   if (delta.side == Side::Bid) {
-    set_level(bids_, delta.price_cents, delta.size);
+    apply_to(bids_);
   } else {
-    set_level(asks_, delta.price_cents, delta.size);
+    apply_to(asks_);
   }
 }
 
