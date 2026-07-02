@@ -5,7 +5,8 @@
 #   basis_normalize <- basis_model
 #   basis_analytics <- basis_model
 #   basis_api       <- basis_model
-#   basis (exe)     <- everything above
+#   basis_bench     <- feed + normalize + analytics + api (composition root)
+#   basis (exe)     <- basis_bench
 
 add_library(basis_core
   core/logger.cpp
@@ -42,6 +43,11 @@ add_library(basis_api
 )
 target_link_libraries(basis_api PUBLIC basis_model)
 
+add_library(basis_bench
+  bench/latency_recorder.cpp
+)
+target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
+  basis_analytics basis_api)
+
 add_executable(basis main.cpp)
-target_link_libraries(basis PRIVATE basis_feed basis_normalize basis_analytics
-  basis_api)
+target_link_libraries(basis PRIVATE basis_bench)
