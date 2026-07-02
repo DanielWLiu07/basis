@@ -1,23 +1,45 @@
 #pragma once
 
-#include <optional>
+#include <cstdint>
+#include <functional>
 #include <string>
+#include <unordered_map>
 
 #include "model/book_delta.h"
+#include "model/unified_book.h"
+#include "normalize/contract_registry.h"
 
 namespace basis::normalize {
 
-// Maps a venue-native market id to a venue-neutral event id, so the same
-// real-world outcome on Kalshi and Polymarket lands in one UnifiedBook.
-// Phase 3 starts config-driven (configs/contracts.toml); fuzzy auto-matching
-// is a stretch.
-class ContractRegistry {
+// Routes canonical deltas into per-event unified books. This is the point
+// where venue-native market ids disappear: everything downstream is keyed by
+// the registry's venue-neutral event id. Deltas for unmapped markets are
+// counted and skipped, never guessed.
+class Normalizer {
  public:
-  virtual ~ContractRegistry() = default;
+  // Fires after a delta has been applied to its event's book, on the
+  // caller's thread.
+  using Observer = std::function<void(const std::string& event_id,
+                                      const model::UnifiedBook& book,
+                                      const model::BookDelta& delta)>;
 
-  // Canonical event id for a (venue, market) pair, if one is mapped.
-  virtual std::optional<std::string> event_id(model::Venue venue,
-                                              const std::string& market) const = 0;
+  explicit Normalizer(const ContractRegistry& registry)
+      : registry_(registry) {}
+
+  void set_observer(Observer observer) { observer_ = std::move(observer); }
+
+  // True if the delta was mapped to an event and applied.
+  bool on_delta(const model::BookDelta& delta);
+
+  const model::UnifiedBook* book(const std::string& event_id) const;
+
+  std::uint64_t unmapped_deltas() const { return unmapped_; }
+
+ private:
+  const ContractRegistry& registry_;
+  Observer observer_;
+  std::unordered_map<std::string, model::UnifiedBook> books_;
+  std::uint64_t unmapped_ = 0;
 };
 
 }  // namespace basis::normalize

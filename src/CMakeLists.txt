@@ -1,8 +1,9 @@
 # Layering is enforced by what each library links. See PLAN.md.
 #   basis_core   <- nothing project-specific
 #   basis_model  <- basis_core
-#   basis_feed   <- basis_model (+ simdjson)
-#   basis (exe)  <- everything above
+#   basis_feed      <- basis_model (+ simdjson)
+#   basis_normalize <- basis_model
+#   basis (exe)     <- everything above
 
 add_library(basis_core
   core/logger.cpp
@@ -23,5 +24,11 @@ add_library(basis_feed
 )
 target_link_libraries(basis_feed PUBLIC basis_model simdjson)
 
+add_library(basis_normalize
+  normalize/contract_registry.cpp
+  normalize/normalizer.cpp
+)
+target_link_libraries(basis_normalize PUBLIC basis_model)
+
 add_executable(basis main.cpp)
-target_link_libraries(basis PRIVATE basis_feed)
+target_link_libraries(basis PRIVATE basis_feed basis_normalize)
