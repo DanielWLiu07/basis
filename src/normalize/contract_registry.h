@@ -45,12 +45,22 @@ class TomlContractRegistry final : public ContractRegistry {
 
   const std::vector<std::string>& event_ids() const { return event_ids_; }
 
+  // Subscribe keys for the live feeds, in file order.
+  const std::vector<std::string>& kalshi_tickers() const {
+    return kalshi_tickers_;
+  }
+  const std::vector<std::string>& polymarket_tokens() const {
+    return polymarket_tokens_;
+  }
+
  private:
   TomlContractRegistry() = default;
 
   std::unordered_map<std::string, std::string> kalshi_to_event_;
   std::unordered_map<std::string, std::string> polymarket_to_event_;
   std::vector<std::string> event_ids_;
+  std::vector<std::string> kalshi_tickers_;
+  std::vector<std::string> polymarket_tokens_;
 };
 
 }  // namespace basis::normalize

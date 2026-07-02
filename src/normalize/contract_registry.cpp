@@ -60,20 +60,24 @@ std::optional<TomlContractRegistry> TomlContractRegistry::parse(
       set_error(error, event.line, "[[event]] has no id");
       return false;
     }
-    if (!event.kalshi.empty() &&
-        !registry.kalshi_to_event_.emplace(event.kalshi, event.id).second) {
-      set_error(error, event.line,
-                "kalshi market '" + event.kalshi + "' mapped twice");
-      return false;
+    if (!event.kalshi.empty()) {
+      if (!registry.kalshi_to_event_.emplace(event.kalshi, event.id).second) {
+        set_error(error, event.line,
+                  "kalshi market '" + event.kalshi + "' mapped twice");
+        return false;
+      }
+      registry.kalshi_tickers_.push_back(event.kalshi);
     }
-    if (!event.polymarket_token.empty() &&
-        !registry.polymarket_to_event_
-             .emplace(event.polymarket_token, event.id)
-             .second) {
-      set_error(error, event.line,
-                "polymarket token '" + event.polymarket_token +
-                    "' mapped twice");
-      return false;
+    if (!event.polymarket_token.empty()) {
+      if (!registry.polymarket_to_event_
+               .emplace(event.polymarket_token, event.id)
+               .second) {
+        set_error(error, event.line,
+                  "polymarket token '" + event.polymarket_token +
+                      "' mapped twice");
+        return false;
+      }
+      registry.polymarket_tokens_.push_back(event.polymarket_token);
     }
     registry.event_ids_.push_back(event.id);
     event = PendingEvent{};

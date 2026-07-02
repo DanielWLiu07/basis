@@ -28,6 +28,12 @@ polymarket_token = "9944001"
   EXPECT_FALSE(reg->event_id(Venue::Kalshi, "UNKNOWN").has_value());
   // Venue matters: a Kalshi ticker is not a Polymarket token.
   EXPECT_FALSE(reg->event_id(Venue::Polymarket, "FED-26SEP-CUT").has_value());
+
+  // Subscribe keys for the live feeds, in file order.
+  ASSERT_EQ(reg->kalshi_tickers().size(), 2u);
+  EXPECT_EQ(reg->kalshi_tickers()[0], "FED-26SEP-CUT");
+  ASSERT_EQ(reg->polymarket_tokens().size(), 2u);
+  EXPECT_EQ(reg->polymarket_tokens()[1], "9944001");
 }
 
 TEST(TomlContractRegistry, EventWithoutIdFailsWithLineNumber) {
