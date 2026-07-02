@@ -8,6 +8,7 @@ add_executable(basis_tests
   test_feed_log.cpp
   test_contract_registry.cpp
   test_normalizer.cpp
+  test_divergence.cpp
 )
 target_link_libraries(basis_tests PRIVATE basis_feed basis_normalize GTest::gtest_main)
 # Lets tests load checked-in configs relative to the repo, not the build dir.

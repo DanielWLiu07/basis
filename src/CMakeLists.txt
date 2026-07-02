@@ -3,6 +3,7 @@
 #   basis_model  <- basis_core
 #   basis_feed      <- basis_model (+ simdjson)
 #   basis_normalize <- basis_model
+#   basis_analytics <- basis_model
 #   basis (exe)     <- everything above
 
 add_library(basis_core
@@ -30,5 +31,10 @@ add_library(basis_normalize
 )
 target_link_libraries(basis_normalize PUBLIC basis_model)
 
+add_library(basis_analytics
+  analytics/lead_lag.cpp
+)
+target_link_libraries(basis_analytics PUBLIC basis_model)
+
 add_executable(basis main.cpp)
-target_link_libraries(basis PRIVATE basis_feed basis_normalize)
+target_link_libraries(basis PRIVATE basis_feed basis_normalize basis_analytics)
