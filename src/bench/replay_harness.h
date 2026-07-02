@@ -1,0 +1,87 @@
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "analytics/divergence.h"
+#include "analytics/lead_lag.h"
+#include "api/in_process_session.h"
+#include "bench/latency_recorder.h"
+#include "feed/kalshi_parser.h"
+#include "feed/polymarket_parser.h"
+#include "normalize/normalizer.h"
+
+namespace basis::bench {
+
+// Everything one replay produced. Counters follow the no-silent-drop rule:
+// every record is accounted for as deltas, ignored, or malformed.
+struct ReplayStats {
+  std::uint64_t records = 0;
+  std::uint64_t kalshi_messages = 0;
+  std::uint64_t polymarket_messages = 0;
+  std::uint64_t deltas = 0;
+  std::uint64_t ignored = 0;
+  std::uint64_t malformed = 0;
+  std::uint64_t malformed_lines = 0;  // broken feedlog framing
+  std::uint64_t gaps = 0;
+  std::uint64_t unmapped_deltas = 0;
+
+  LatencyRecorder::Report latency;  // per-record ingest-to-signal
+
+  struct EventReport {
+    std::string event_id;
+    std::uint64_t basis_samples = 0;
+    double basis_mean = 0.0;
+    double basis_min = 0.0;
+    double basis_max = 0.0;
+    double basis_last = 0.0;
+    analytics::LeadLagResult lead_lag;  // positive: Kalshi leads
+  };
+  std::vector<EventReport> events;  // sorted by event id
+};
+
+// The composition root of the offline engine: reads a feedlog, runs each
+// record through parse -> normalize -> unified book -> analytics -> api, and
+// times the whole chain per record with the network already stripped away.
+// One harness runs one file; make a fresh harness per replay.
+class ReplayHarness {
+ public:
+  // session may be null when nothing consumes updates (pure benchmarking);
+  // fields published per event update: kalshi_mid, poly_mid, basis.
+  ReplayHarness(const normalize::ContractRegistry& registry,
+                api::InProcessSession* session = nullptr,
+                analytics::LeadLagConfig lead_lag_config = {});
+
+  // Replays at max rate. Nullopt only if the file cannot be opened.
+  std::optional<ReplayStats> run(const std::string& feedlog_path,
+                                 std::string* error = nullptr);
+
+ private:
+  void on_event_update(const std::string& event_id,
+                       const model::UnifiedBook& book,
+                       const model::BookDelta& delta);
+
+  const normalize::ContractRegistry& registry_;
+  api::InProcessSession* session_;
+  analytics::LeadLagConfig lead_lag_config_;
+
+  feed::KalshiParser kalshi_;
+  feed::PolymarketParser polymarket_;
+  normalize::Normalizer normalizer_;
+
+  struct EventAnalytics {
+    analytics::DivergenceTracker divergence;
+    analytics::CrossCorrelationEstimator lead_lag;
+
+    explicit EventAnalytics(const analytics::LeadLagConfig& config)
+        : lead_lag(config) {}
+  };
+  std::unordered_map<std::string, EventAnalytics> analytics_;
+  LatencyRecorder latency_;
+  ReplayStats stats_;
+};
+
+}  // namespace basis::bench
