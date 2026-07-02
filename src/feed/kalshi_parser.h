@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <simdjson.h>
 
@@ -21,16 +22,24 @@ namespace basis::feed {
 //   orderbook_delta     msg.delta is a signed size *change* (Action::Add) at
 //                       msg.price on msg.side ("yes"/"no"), same folding.
 //
-// Messages carry a per-subscription sequence number. A gap means missed
-// deltas: the parser prepends a Clear (the book must not go stale silently)
-// and sets ParseResult::gap so the live feed can re-snapshot.
+// Prices on the wire are integer cents in 1..99; anything else is counted
+// as Malformed, never folded (the fold would fabricate a nonsense level).
+//
+// Gap detection: messages carry a sequence number that is contiguous per
+// subscription (sid), not per market, so gaps are tracked by sid. A gap, or
+// a delta for a market that never had a snapshot, makes the local book
+// untrustworthy: the parser prepends a Clear (state must not go stale
+// silently) and sets ParseResult::gap. Only the current message's market is
+// cleared here; the live feed reacts to gap by re-snapshotting the whole
+// subscription, which clears the rest.
 class KalshiParser {
  public:
   ParseResult parse(std::string_view raw, std::int64_t recv_ns);
 
  private:
   simdjson::dom::parser parser_;
-  std::unordered_map<std::string, std::uint64_t> last_seq_;  // per market
+  std::unordered_map<std::uint64_t, std::uint64_t> last_seq_;  // per sid
+  std::unordered_set<std::string> snapshotted_;  // markets with a snapshot
 };
 
 }  // namespace basis::feed

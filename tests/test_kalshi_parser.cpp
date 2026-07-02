@@ -100,6 +100,76 @@ TEST(KalshiParser, IgnoresCommandRepliesAndUnknownTypes) {
             ParseStatus::Ignored);
 }
 
+TEST(KalshiParser, SequenceIsPerSubscriptionNotPerMarket) {
+  // One subscription (sid) carries interleaved markets on a single shared
+  // sequence; per-market tracking would flag a false gap on every delta.
+  KalshiParser p;
+  ASSERT_EQ(p.parse(R"({"type":"orderbook_snapshot","sid":1,"seq":10,
+    "msg":{"market_ticker":"A","yes":[[40,10]],"no":[]}})", 0).status,
+            ParseStatus::Ok);
+  ASSERT_EQ(p.parse(R"({"type":"orderbook_snapshot","sid":1,"seq":11,
+    "msg":{"market_ticker":"B","yes":[[60,10]],"no":[]}})", 0).status,
+            ParseStatus::Ok);
+  const char* fmt = R"({"type":"orderbook_delta","sid":1,"seq":%d,
+    "msg":{"market_ticker":"%s","price":45,"delta":1,"side":"yes"}})";
+  int seq = 12;
+  for (const char* market : {"A", "B", "A", "B"}) {
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), fmt, seq++, market);
+    const auto r = p.parse(buf, 0);
+    ASSERT_EQ(r.status, ParseStatus::Ok);
+    EXPECT_FALSE(r.gap) << "market " << market << " seq " << seq - 1;
+  }
+}
+
+TEST(KalshiParser, DeltaBeforeSnapshotFlagsGapOnce) {
+  KalshiParser p;
+  // No snapshot was ever seen for this market: there is no book to apply
+  // the delta to, so the stream is untrustworthy until a snapshot arrives.
+  const auto first = p.parse(R"({
+    "type": "orderbook_delta", "sid": 1, "seq": 5,
+    "msg": { "market_ticker": "NEVER-SNAPSHOTTED",
+             "price": 45, "delta": 10, "side": "yes" }
+  })", 0);
+  ASSERT_EQ(first.status, ParseStatus::Ok);
+  EXPECT_TRUE(first.gap);
+  EXPECT_EQ(first.deltas[0].action, Action::Clear);
+
+  const auto second = p.parse(R"({
+    "type": "orderbook_delta", "sid": 1, "seq": 6,
+    "msg": { "market_ticker": "NEVER-SNAPSHOTTED",
+             "price": 45, "delta": 10, "side": "yes" }
+  })", 0);
+  EXPECT_FALSE(second.gap);  // flagged once, not on every delta
+}
+
+TEST(KalshiParser, WrongTypedBookSideIsMalformedNotEmpty) {
+  KalshiParser p;
+  // A present-but-corrupt side must not read as "legal empty book": that
+  // would wipe the resident book while reporting Ok.
+  const auto r = p.parse(R"({
+    "type": "orderbook_snapshot", "sid": 1, "seq": 1,
+    "msg": { "market_ticker": "X", "yes": "oops", "no": [] }
+  })", 0);
+  EXPECT_EQ(r.status, ParseStatus::Malformed);
+  EXPECT_TRUE(r.deltas.empty());
+}
+
+TEST(KalshiParser, OutOfRangePricesAreMalformed) {
+  KalshiParser p;
+  // 100 - 2147483648 would overflow the folded int; 0 and 100 are outside
+  // the contract range. All must be counted, never folded into a level.
+  EXPECT_EQ(p.parse(R"({"type":"orderbook_snapshot","sid":1,"seq":1,
+    "msg":{"market_ticker":"X","yes":[],"no":[[2147483648,80]]}})", 0).status,
+            ParseStatus::Malformed);
+  EXPECT_EQ(p.parse(R"({"type":"orderbook_delta","sid":1,"seq":2,
+    "msg":{"market_ticker":"X","price":100,"delta":1,"side":"no"}})", 0).status,
+            ParseStatus::Malformed);
+  EXPECT_EQ(p.parse(R"({"type":"orderbook_delta","sid":1,"seq":3,
+    "msg":{"market_ticker":"X","price":0,"delta":1,"side":"yes"}})", 0).status,
+            ParseStatus::Malformed);
+}
+
 TEST(KalshiParser, MalformedInputIsFlaggedNotDropped) {
   KalshiParser p;
   EXPECT_EQ(p.parse("not json at all", 0).status, ParseStatus::Malformed);

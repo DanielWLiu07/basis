@@ -4,9 +4,15 @@ namespace basis::feed {
 
 namespace {
 
+using simdjson::NO_SUCH_FIELD;
 using simdjson::SUCCESS;
 using simdjson::dom::array;
 using simdjson::dom::element;
+
+// Kalshi wire prices are integer cents strictly inside the contract range.
+// Validating on the raw int64, before any narrowing or folding, is what
+// keeps 100 - price from fabricating a level (or overflowing an int).
+bool valid_wire_price(std::int64_t price) { return price >= 1 && price <= 99; }
 
 // Appends Set deltas for one side of a snapshot. Kalshi levels are
 // [price_cents, size] pairs of resting bids on that contract side; NO bids
@@ -15,9 +21,13 @@ bool append_snapshot_side(const element& msg, const char* key,
                           model::Side side, bool fold_price,
                           const model::BookDelta& base,
                           std::vector<model::BookDelta>& out) {
-  array levels;
-  if (msg[key].get_array().get(levels) != SUCCESS) {
+  const auto field = msg[key];
+  if (field.error() == NO_SUCH_FIELD) {
     return true;  // side absent entirely is a legal empty book
+  }
+  array levels;
+  if (field.get_array().get(levels) != SUCCESS) {
+    return false;  // present but not an array: corrupt, not empty
   }
   for (const element level : levels) {
     array pair;
@@ -25,7 +35,8 @@ bool append_snapshot_side(const element& msg, const char* key,
     std::int64_t size = 0;
     if (level.get_array().get(pair) != SUCCESS ||
         pair.at(0).get_int64().get(price) != SUCCESS ||
-        pair.at(1).get_int64().get(size) != SUCCESS) {
+        pair.at(1).get_int64().get(size) != SUCCESS ||
+        !valid_wire_price(price)) {
       return false;
     }
     model::BookDelta d = base;
@@ -67,7 +78,9 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
     return result;
   }
   std::uint64_t seq = 0;
-  const bool has_seq = doc["seq"].get_uint64().get(seq) == SUCCESS;
+  std::uint64_t sid = 0;
+  const bool has_seq = doc["seq"].get_uint64().get(seq) == SUCCESS &&
+                       doc["sid"].get_uint64().get(sid) == SUCCESS;
 
   const model::BookDelta base{.venue = model::Venue::Kalshi,
                               .market = std::string(ticker),
@@ -76,7 +89,7 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
 
   if (is_snapshot) {
     // A snapshot is authoritative: clear first so old levels cannot linger,
-    // and reset sequence tracking to the snapshot's number.
+    // and reset the subscription's sequence tracking to its number.
     model::BookDelta clear = base;
     clear.action = model::Action::Clear;
     result.deltas.push_back(std::move(clear));
@@ -88,7 +101,8 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
       result.status = ParseStatus::Malformed;
       return result;
     }
-    if (has_seq) last_seq_[base.market] = seq;
+    if (has_seq) last_seq_[sid] = seq;
+    snapshotted_.insert(base.market);
     result.status = ParseStatus::Ok;
     return result;
   }
@@ -100,21 +114,27 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
   if (msg["price"].get_int64().get(price) != SUCCESS ||
       msg["delta"].get_int64().get(size_change) != SUCCESS ||
       msg["side"].get_string().get(side) != SUCCESS ||
-      (side != "yes" && side != "no")) {
+      (side != "yes" && side != "no") || !valid_wire_price(price)) {
     result.status = ParseStatus::Malformed;
     return result;
   }
 
   if (has_seq) {
-    const auto it = last_seq_.find(base.market);
+    const auto it = last_seq_.find(sid);
     if (it != last_seq_.end() && seq != it->second + 1) {
-      // Missed at least one delta: the local book is untrustworthy.
-      result.gap = true;
-      model::BookDelta clear = base;
-      clear.action = model::Action::Clear;
-      result.deltas.push_back(std::move(clear));
+      result.gap = true;  // missed at least one message on this subscription
     }
-    last_seq_[base.market] = seq;
+    last_seq_[sid] = seq;
+  }
+  if (snapshotted_.insert(base.market).second) {
+    // First sight of this market is a delta: there is no book to apply it
+    // to. Flag once; the live feed answers a gap with a re-snapshot.
+    result.gap = true;
+  }
+  if (result.gap) {
+    model::BookDelta clear = base;
+    clear.action = model::Action::Clear;
+    result.deltas.push_back(std::move(clear));
   }
 
   model::BookDelta d = base;
