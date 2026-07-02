@@ -55,8 +55,14 @@ LeadLagResult CrossCorrelationEstimator::estimate() const {
   result.samples = samples_.size();
   if (samples_.size() < 2) return result;
 
+  // Timestamps come from the feedlog, so they can be garbage. Check the
+  // span in floating point first: the int64 subtraction below would be
+  // undefined behavior on extreme values.
+  const double approx_span =
+      static_cast<double>(samples_.back().ts_ns) -
+      static_cast<double>(samples_.front().ts_ns);
+  if (approx_span <= 0.0 || approx_span > 4.0e18) return result;
   const std::int64_t span_ns = samples_.back().ts_ns - samples_.front().ts_ns;
-  if (span_ns <= 0) return result;
   const auto bins =
       static_cast<std::size_t>(span_ns / config_.grid_ns) + 1;
   // A runaway span (bad timestamps) would allocate absurd grids; refuse

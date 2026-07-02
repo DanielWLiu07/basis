@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -89,6 +90,17 @@ TEST(CrossCorrelationEstimator, FlatSeriesReportsNoSignal) {
   for (int i = 0; i < 100; ++i) {
     est.observe(50.0, 45.0, static_cast<std::int64_t>(i) * 100 * kMs);
   }
+  const auto result = est.estimate();
+  EXPECT_DOUBLE_EQ(result.correlation, 0.0);
+  EXPECT_DOUBLE_EQ(result.lead_seconds, 0.0);
+}
+
+TEST(CrossCorrelationEstimator, GarbageTimestampsAreSafe) {
+  // recv_ns comes from the feedlog and can be arbitrary; the span must not
+  // overflow and the estimator must decline rather than allocate a grid.
+  CrossCorrelationEstimator est;
+  est.observe(50.0, 45.0, std::numeric_limits<std::int64_t>::min() + 10);
+  est.observe(51.0, 46.0, std::numeric_limits<std::int64_t>::max() - 10);
   const auto result = est.estimate();
   EXPECT_DOUBLE_EQ(result.correlation, 0.0);
   EXPECT_DOUBLE_EQ(result.lead_seconds, 0.0);
