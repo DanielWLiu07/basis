@@ -4,6 +4,7 @@
 #   basis_feed      <- basis_model (+ simdjson)
 #   basis_normalize <- basis_model
 #   basis_analytics <- basis_model
+#   basis_api       <- basis_model
 #   basis (exe)     <- everything above
 
 add_library(basis_core
@@ -36,5 +37,11 @@ add_library(basis_analytics
 )
 target_link_libraries(basis_analytics PUBLIC basis_model)
 
+add_library(basis_api
+  api/in_process_session.cpp
+)
+target_link_libraries(basis_api PUBLIC basis_model)
+
 add_executable(basis main.cpp)
-target_link_libraries(basis PRIVATE basis_feed basis_normalize basis_analytics)
+target_link_libraries(basis PRIVATE basis_feed basis_normalize basis_analytics
+  basis_api)
