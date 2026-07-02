@@ -20,7 +20,10 @@ class InProcessSession final : public Session {
                  Handler handler) override;
   void stop() override;
 
-  // Engine side. Updates published after stop() are dropped.
+  // Engine side. Updates published after stop() returns are dropped, but a
+  // publish already past its stopped check may still deliver concurrently
+  // with (or after) stop() on another thread: stop() is not a delivery
+  // barrier. Anything a handler captures must outlive in-flight publishes.
   void publish(const Update& update);
 
  private:

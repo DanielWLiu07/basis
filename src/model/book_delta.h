@@ -24,7 +24,7 @@ struct BookDelta {
   std::string   market;             // venue-native market id
   Action        action      = Action::Set;
   Side          side        = Side::Bid;
-  int           price_cents = 0;    // 1..99
+  int           price_cents = 0;    // parsers enforce 0..100 (Kalshi wire: 1..99)
   std::int64_t  size        = 0;    // meaning depends on action
   std::uint64_t seq         = 0;    // venue sequence number (gap detection)
   std::int64_t  ts_ns       = 0;    // ingest timestamp, ns since epoch
