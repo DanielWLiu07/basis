@@ -11,6 +11,16 @@
 #include "core/version.h"
 #include "normalize/contract_registry.h"
 
+#ifdef BASIS_HAS_NET
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <thread>
+
+#include "feed/feed_log.h"
+#include "feed/polymarket_feed.h"
+#endif
+
 namespace {
 
 int usage() {
@@ -25,7 +35,15 @@ int usage() {
       "  basis replay <in.feedlog> [--config <contracts.toml>]\n"
       "      replay a capture through parse -> normalize -> analytics -> api\n"
       "      and report basis, lead-lag, and ingest-to-signal latency\n"
-      "      (default config: configs/synthetic.toml)\n",
+      "      (default config: configs/synthetic.toml)\n"
+#ifdef BASIS_HAS_NET
+      "\n"
+      "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
+      "      capture live feeds for the configured contracts (Polymarket\n"
+      "      needs no credentials); stop with --seconds or ctrl-c\n"
+      "      (default config: configs/contracts.toml)\n"
+#endif
+      ,
       basis::kVersion);
   return 1;
 }
@@ -168,6 +186,102 @@ int run_replay(const std::vector<std::string_view>& args) {
   return 0;
 }
 
+#ifdef BASIS_HAS_NET
+
+std::atomic<bool> g_interrupted{false};
+
+void handle_sigint(int) { g_interrupted.store(true); }
+
+int run_record(const std::vector<std::string_view>& args) {
+  if (args.empty()) return usage();
+  const std::string out_path(args[0]);
+  const auto config_path =
+      flag_string(args, "--config", "configs/contracts.toml");
+  const auto seconds = flag_value(args, "--seconds", 0);  // 0: until ctrl-c
+  if (!seconds || *seconds < 0 || *seconds > 7 * 86'400) {
+    basis::log::error("record: bad --seconds value");
+    return usage();
+  }
+
+  std::string error;
+  const auto registry =
+      basis::normalize::TomlContractRegistry::load(config_path, &error);
+  if (!registry) {
+    basis::log::error(error);
+    return 1;
+  }
+  const auto& tokens = registry->polymarket_tokens();
+  if (tokens.empty()) {
+    basis::log::error("no polymarket tokens in " + config_path +
+                      "; nothing to record");
+    return 1;
+  }
+
+  basis::feed::FeedLogWriter writer(out_path);
+  if (!writer.ok()) {
+    basis::log::error("cannot open " + out_path + " for writing");
+    return 1;
+  }
+
+  // The raw tap runs on the feed's IO thread and is its only writer user;
+  // rejected writes are counted, per the no-silent-drop rule.
+  std::atomic<std::uint64_t> written{0};
+  std::atomic<std::uint64_t> rejected{0};
+  basis::feed::PolymarketFeed feed({.token_ids = tokens});
+  feed.set_raw_tap([&](std::string_view payload, std::int64_t recv_ns) {
+    std::string framed(payload);
+    // Some messages arrive with embedded newlines; outside JSON strings
+    // whitespace is insignificant, so flattening keeps the payload valid
+    // instead of losing a real message to the line framing.
+    for (char& c : framed) {
+      if (c == '\n' || c == '\r') c = ' ';
+    }
+    const bool ok = writer.write(
+        {recv_ns, basis::model::Venue::Polymarket, std::move(framed)});
+    (ok ? written : rejected).fetch_add(1);
+  });
+
+  std::signal(SIGINT, handle_sigint);
+  std::printf("recording %zu polymarket token(s) -> %s%s\n", tokens.size(),
+              out_path.c_str(),
+              *seconds > 0 ? "" : "  (ctrl-c to stop)");
+  feed.start();
+
+  const auto started = std::chrono::steady_clock::now();
+  auto next_report = started + std::chrono::seconds(5);
+  while (!g_interrupted.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const auto now = std::chrono::steady_clock::now();
+    if (*seconds > 0 && now - started >= std::chrono::seconds(*seconds)) {
+      break;
+    }
+    if (now >= next_report) {
+      next_report += std::chrono::seconds(5);
+      std::printf("  %llu msgs  %.1f KiB  %llu deltas  %llu malformed  "
+                  "%llu reconnects\n",
+                  static_cast<unsigned long long>(feed.messages()),
+                  static_cast<double>(feed.bytes()) / 1024.0,
+                  static_cast<unsigned long long>(feed.deltas()),
+                  static_cast<unsigned long long>(feed.malformed()),
+                  static_cast<unsigned long long>(feed.reconnects()));
+    }
+  }
+  feed.stop();
+
+  std::printf("wrote %llu records to %s (%llu rejected, %llu malformed, "
+              "%llu reconnects)\n",
+              static_cast<unsigned long long>(written.load()),
+              out_path.c_str(),
+              static_cast<unsigned long long>(rejected.load()),
+              static_cast<unsigned long long>(feed.malformed()),
+              static_cast<unsigned long long>(feed.reconnects()));
+  std::printf("replay it:  basis replay %s --config %s\n", out_path.c_str(),
+              config_path.c_str());
+  return 0;
+}
+
+#endif  // BASIS_HAS_NET
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -178,5 +292,8 @@ int main(int argc, char** argv) {
   const std::vector<std::string_view> rest(args.begin() + 1, args.end());
   if (command == "synth") return run_synth(rest);
   if (command == "replay") return run_replay(rest);
+#ifdef BASIS_HAS_NET
+  if (command == "record") return run_record(rest);
+#endif
   return usage();
 }
