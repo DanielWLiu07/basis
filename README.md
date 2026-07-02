@@ -45,9 +45,29 @@ per-event basis statistics, the recovered lead, and ingest-to-signal latency
 percentiles. The same closed loop runs in the test suite: if the engine
 cannot recover an injected lead through the real parsers, the build is red.
 
-The configure pulls GoogleTest and simdjson. Live feeds and the BDE
-allocator path come online behind CMake options (`BASIS_ENABLE_NET`,
-`BASIS_ENABLE_BDE`) as their phases land.
+The configure pulls GoogleTest and simdjson. The BDE allocator path comes
+online behind `BASIS_ENABLE_BDE` in a later phase.
+
+## Live capture
+
+With `-DBASIS_ENABLE_NET=ON` (needs system Boost and OpenSSL), `basis
+record` connects to Polymarket's public market WebSocket, no credentials
+required, subscribes to every contract in the registry, and captures the
+raw feed:
+
+```
+cmake -B build-net -G Ninja -DBASIS_ENABLE_NET=ON
+cmake --build build-net -j
+./build-net/src/basis record captures/live.feedlog --seconds 60
+./build-net/src/basis replay captures/live.feedlog --config configs/contracts.toml
+```
+
+`configs/contracts.toml` maps real cross-venue contracts (2026 World Cup
+winners, Fed decisions) between Kalshi tickers and Polymarket token ids.
+The Kalshi live feed requires an authenticated session (free account + RSA
+API key) and is the next phase; until both venues stream, replay reports
+each event's Polymarket book and flags the missing overlap rather than
+inventing a basis.
 
 ## Design at a glance
 
