@@ -10,19 +10,20 @@
 #   polymarket_token = Polymarket YES-outcome token id (asset_id, subscribe key)
 #   polymarket_market = Polymarket condition id (0x...), for reference
 #
-# These ids are illustrative placeholders. Real ids get filled in once the
-# feeds are live and the overlapping markets are confirmed.
+# The kalshi tickers are illustrative; the polymarket ids are commented out
+# until the real token ids are confirmed from the live feed, because the
+# registry treats every uncommented mapping as live and rejects duplicates.
 
 [[event]]
 id = "fed-cut-2026-09"
 description = "Fed cuts rates at the September 2026 meeting"
 kalshi = "FED-26SEP-CUT"
-polymarket_token = "<YES_TOKEN_ID>"
-polymarket_market = "0x<CONDITION_ID>"
+# polymarket_token = "<YES_TOKEN_ID>"
+# polymarket_market = "0x<CONDITION_ID>"
 
 [[event]]
 id = "us-pres-2028-dem"
 description = "Democratic nominee wins the 2028 US presidential election"
 kalshi = "PRES-2028-DEM"
-polymarket_token = "<YES_TOKEN_ID>"
-polymarket_market = "0x<CONDITION_ID>"
+# polymarket_token = "<YES_TOKEN_ID>"
+# polymarket_market = "0x<CONDITION_ID>"
