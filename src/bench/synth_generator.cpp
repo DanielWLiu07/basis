@@ -6,6 +6,7 @@
 #include <random>
 #include <vector>
 
+#include "core/rng.h"
 #include "feed/feed_log.h"
 
 namespace basis::bench {
@@ -78,9 +79,13 @@ std::string polymarket_change(const std::string& token, const char* side,
 
 bool generate_synthetic_session(const SynthConfig& config,
                                 const std::string& path, std::string* error) {
-  std::mt19937 rng(config.seed);
-  std::normal_distribution<double> move(0.0, 0.6);
-  std::uniform_int_distribution<std::int64_t> jitter(-20'000'000, 20'000'000);
+  // Portable draws (core/rng.h): the same seed yields the same file on
+  // every platform, which is what "deterministic session" promises.
+  std::mt19937 engine(config.seed);
+  const auto move = [&engine] { return rng::normal(engine, 0.0, 0.6); };
+  const auto jitter = [&engine] {
+    return rng::uniform_int(engine, -20'000'000, 20'000'000);
+  };
 
   std::vector<feed::FeedLogRecord> records;
   records.reserve(static_cast<std::size_t>(config.steps) * 4 + 8);
@@ -99,14 +104,14 @@ bool generate_synthetic_session(const SynthConfig& config,
                        (config.start_ts_ns + config.lead_ns) / 1'000'000)});
 
   for (int step = 1; step <= config.steps; ++step) {
-    latent = std::clamp(latent + move(rng), 5.0, 95.0);
+    latent = std::clamp(latent + move(), 5.0, 95.0);
     const int new_bid = static_cast<int>(std::lround(latent)) - 1;
     const int new_ask = new_bid + 2;
     if (new_bid == bid) continue;  // quote unchanged, no messages
 
     const std::int64_t ts =
         config.start_ts_ns +
-        static_cast<std::int64_t>(step) * config.step_ns + jitter(rng);
+        static_cast<std::int64_t>(step) * config.step_ns + jitter();
 
     // Kalshi moves first: pull the old level, post the new one, per side.
     // The YES frame's ask lives on the wire as a NO bid at 100 - ask.
