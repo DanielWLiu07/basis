@@ -23,6 +23,10 @@ jobs:
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: End-to-end smoke (synth + replay)
+        run: |
+          ./build/src/basis synth demo.feedlog --steps 2000 --lead-ms 400
+          ./build/src/basis replay demo.feedlog --config configs/synthetic.toml
 
   sanitizers:
     name: ${{ matrix.san }}
