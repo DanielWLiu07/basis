@@ -64,4 +64,12 @@ if(BASIS_ENABLE_NET)
   )
   target_link_libraries(basis_net PUBLIC basis_core
     Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+
+  add_library(basis_feed_live
+    feed/polymarket_feed.cpp
+  )
+  target_link_libraries(basis_feed_live PUBLIC basis_feed basis_net)
+
+  target_link_libraries(basis PRIVATE basis_feed_live)
+  target_compile_definitions(basis PRIVATE BASIS_HAS_NET=1)
 endif()
