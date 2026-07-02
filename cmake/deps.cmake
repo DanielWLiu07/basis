@@ -10,16 +10,21 @@ if(BASIS_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
-# Phase 1: live WSS feeds + JSON parsing. Wired when BASIS_ENABLE_NET is set.
+# simdjson is always on: the feed parsers are the heart of the offline replay
+# pipeline, not just the live path, so JSON parsing is a core dependency.
+set(SIMDJSON_DEVELOPER_MODE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(simdjson
+  GIT_REPOSITORY https://github.com/simdjson/simdjson.git
+  GIT_TAG        v3.10.1)
+FetchContent_MakeAvailable(simdjson)
+
+# Phase 1: live WSS feeds. Wired when BASIS_ENABLE_NET is set.
 #   - OpenSSL (system) for wss://
 #   - Boost.Beast for the WebSocket client
-#   - simdjson for low-allocation parsing
 if(BASIS_ENABLE_NET)
-  message(STATUS "[basis] NET enabled: add OpenSSL + Boost.Beast + simdjson here (Phase 1)")
+  message(STATUS "[basis] NET enabled: add OpenSSL + Boost.Beast here (Phase 1)")
   # find_package(OpenSSL REQUIRED)
   # find_package(Boost 1.80 REQUIRED)
-  # FetchContent_Declare(simdjson GIT_REPOSITORY https://github.com/simdjson/simdjson.git GIT_TAG v3.10.1)
-  # FetchContent_MakeAvailable(simdjson)
 endif()
 
 # Phase 3: Bloomberg BDE allocators (bdlma) for the normalize hot path.
