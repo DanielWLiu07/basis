@@ -1,11 +1,8 @@
 # Layering is enforced by what each library links. See PLAN.md.
 #   basis_core   <- nothing project-specific
 #   basis_model  <- basis_core
-#   basis (exe)  <- basis_model, basis_core
-#
-# feed/ net/ normalize/ analytics/ api/ bench/ come online per phase; their
-# interface headers live in the tree now (parsed via main.cpp) but are not
-# compiled until their phase wires sources + deps.
+#   basis_feed   <- basis_model (+ simdjson)
+#   basis (exe)  <- everything above
 
 add_library(basis_core
   core/logger.cpp
@@ -19,5 +16,10 @@ add_library(basis_model
 )
 target_link_libraries(basis_model PUBLIC basis_core)
 
+add_library(basis_feed
+  feed/kalshi_parser.cpp
+)
+target_link_libraries(basis_feed PUBLIC basis_model simdjson)
+
 add_executable(basis main.cpp)
-target_link_libraries(basis PRIVATE basis_model)
+target_link_libraries(basis PRIVATE basis_feed)
