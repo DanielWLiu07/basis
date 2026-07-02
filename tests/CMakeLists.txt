@@ -12,6 +12,7 @@ add_executable(basis_tests
   test_lead_lag.cpp
   test_session.cpp
   test_latency_recorder.cpp
+  test_replay_harness.cpp
 )
 target_link_libraries(basis_tests PRIVATE basis_bench GTest::gtest_main)
 # Lets tests load checked-in configs relative to the repo, not the build dir.
