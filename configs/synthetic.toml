@@ -1,0 +1,9 @@
+# Registry for synthetic sessions (basis synth). The ids match the
+# SynthConfig defaults, so a generated feedlog replays against this file
+# with no unmapped deltas.
+
+[[event]]
+id = "synthetic-demo"
+description = "Synthetic latent walk with an injected Kalshi lead"
+kalshi = "SYN-DEMO"
+polymarket_token = "1000001"

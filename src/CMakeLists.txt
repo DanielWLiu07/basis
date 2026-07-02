@@ -46,6 +46,7 @@ target_link_libraries(basis_api PUBLIC basis_model)
 add_library(basis_bench
   bench/latency_recorder.cpp
   bench/replay_harness.cpp
+  bench/synth_generator.cpp
 )
 target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
   basis_analytics basis_api)
