@@ -28,6 +28,31 @@ jobs:
           ./build/src/basis synth demo.feedlog --steps 2000 --lead-ms 400
           ./build/src/basis replay demo.feedlog --config configs/synthetic.toml
 
+  net-build:
+    name: net build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install Boost + OpenSSL
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y libboost-dev libssl-dev
+          else
+            brew install boost openssl@3
+          fi
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_ENABLE_NET=ON
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   sanitizers:
     name: ${{ matrix.san }}
     runs-on: ubuntu-latest
