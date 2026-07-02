@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include "model/order_book.h"
 
 using basis::model::Action;
@@ -79,6 +81,17 @@ TEST(OrderBook, AddBelowZeroRemovesLevel) {
   OrderBook b;
   b.apply(delta(Side::Bid, 45, 10));
   b.apply(delta(Side::Bid, 45, -25, Action::Add));  // over-remove: clamp to gone
+  EXPECT_TRUE(b.empty());
+}
+
+TEST(OrderBook, AddSaturatesInsteadOfOverflowing) {
+  constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+  OrderBook b;
+  b.apply(delta(Side::Bid, 45, kMax));
+  b.apply(delta(Side::Bid, 45, kMax, Action::Add));  // would overflow: clamp
+  EXPECT_EQ(*b.best_bid(), 45);
+  b.apply(delta(Side::Bid, 45, -kMax, Action::Add));
+  b.apply(delta(Side::Bid, 45, -kMax, Action::Add));  // saturates low, removes
   EXPECT_TRUE(b.empty());
 }
 
