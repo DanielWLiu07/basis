@@ -82,6 +82,7 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns,
   std::uint64_t sid = 0;
   const bool has_seq = doc["seq"].get_uint64().get(seq) == SUCCESS &&
                        doc["sid"].get_uint64().get(sid) == SUCCESS;
+  if (has_seq) result.sid = sid;
 
   const model::BookDelta base{.venue = model::Venue::Kalshi,
                               .market = ticker,

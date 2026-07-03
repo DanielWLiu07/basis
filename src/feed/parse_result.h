@@ -32,6 +32,10 @@ struct ParseResult {
   // prepended a Clear delta so the stale book cannot survive; the live feed
   // additionally uses this to trigger a re-snapshot.
   bool gap = false;
+  // Venue subscription id the message arrived on, 0 when absent. Kalshi
+  // gap recovery needs it: re-subscribing a live subscription is rejected,
+  // so the feed unsubscribes this sid first.
+  std::uint64_t sid = 0;
 };
 
 constexpr const char* to_string(ParseStatus s) {

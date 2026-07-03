@@ -94,6 +94,7 @@ if(BASIS_ENABLE_NET)
     Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
   add_library(basis_feed_live
+    feed/kalshi_feed.cpp
     feed/polymarket_feed.cpp
   )
   target_link_libraries(basis_feed_live PUBLIC basis_feed basis_net)
