@@ -39,10 +39,27 @@ if(BASIS_ENABLE_NET)
   message(STATUS "[basis] NET enabled: Boost ${Boost_VERSION}, OpenSSL ${OPENSSL_VERSION}")
 endif()
 
-# Phase 3: Bloomberg BDE allocators (bdlma) for the normalize hot path.
-# Scope to bdlma only; do not pull all of bsl/bde.
+# Phase 3: Bloomberg BDE allocators (bdlma) for the hot path. Scope to
+# bdlma only; do not pull all of bsl/bde.
+#
+# Found as plain libraries rather than via BDE's CMake packages: Homebrew's
+# bdl package config references a libpcre2-posix package that nothing
+# provides, and the bdlma slice we use pulls no pcre2, decimal, or ryu
+# objects out of the static archives anyway. On macOS: brew install bde.
+# Elsewhere: build bloomberg/bde and point CMAKE_PREFIX_PATH at the prefix.
 if(BASIS_ENABLE_BDE)
-  message(STATUS "[basis] BDE enabled: add bloomberg/bde (bdlma) here (Phase 3)")
+  find_path(BASIS_BDE_INCLUDE_DIR bdlma_sequentialallocator.h
+    HINTS /opt/homebrew/opt/bde/include /usr/local/opt/bde/include)
+  find_library(BASIS_BDL_LIBRARY bdl
+    HINTS /opt/homebrew/opt/bde/lib /usr/local/opt/bde/lib)
+  find_library(BASIS_BSL_LIBRARY bsl
+    HINTS /opt/homebrew/opt/bde/lib /usr/local/opt/bde/lib)
+  if(NOT BASIS_BDE_INCLUDE_DIR OR NOT BASIS_BDL_LIBRARY OR NOT BASIS_BSL_LIBRARY)
+    message(FATAL_ERROR "[basis] BASIS_ENABLE_BDE=ON but BDE was not found. "
+      "On macOS: brew install bde. Otherwise build bloomberg/bde and set "
+      "CMAKE_PREFIX_PATH to its install prefix.")
+  endif()
+  message(STATUS "[basis] BDE enabled: ${BASIS_BDL_LIBRARY}")
 endif()
 
 # Phase 4: HdrHistogram for ingest-to-signal latency percentiles.
