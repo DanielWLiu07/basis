@@ -70,6 +70,8 @@ TEST(KalshiParser, SequenceGapClearsBookAndFlags) {
   })", 0);  // seq 11 and 12 were missed
   ASSERT_EQ(r.status, ParseStatus::Ok);
   EXPECT_TRUE(r.gap);
+  // The live feed unsubscribes this sid to force a fresh snapshot.
+  EXPECT_EQ(r.sid, 1u);
   ASSERT_EQ(r.deltas.size(), 2u);
   EXPECT_EQ(r.deltas[0].action, Action::Clear);
   EXPECT_EQ(r.deltas[1].action, Action::Add);
