@@ -9,11 +9,12 @@ namespace basis::bench {
 
 ReplayHarness::ReplayHarness(const normalize::ContractRegistry& registry,
                              api::InProcessSession* session,
-                             analytics::LeadLagConfig lead_lag_config)
+                             analytics::LeadLagConfig lead_lag_config,
+                             std::pmr::memory_resource* book_mr)
     : registry_(registry),
       session_(session),
       lead_lag_config_(lead_lag_config),
-      normalizer_(registry_) {
+      normalizer_(registry_, book_mr) {
   normalizer_.set_observer([this](const std::string& event_id,
                                   const model::UnifiedBook& book,
                                   const model::BookDelta& delta) {
@@ -59,6 +60,10 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     return std::nullopt;
   }
 
+  std::pmr::memory_resource* parse_mr =
+      parse_arena_ ? parse_arena_->resource()
+                   : std::pmr::get_default_resource();
+
   while (const auto record = reader.next()) {
     ++stats_.records;
 
@@ -67,33 +72,41 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     // the feedlog read stays outside it, standing in for the network.
     const auto t0 = time::mono_ns();
 
-    feed::ParseResult parsed;
-    if (record->venue == model::Venue::Kalshi) {
-      ++stats_.kalshi_messages;
-      parsed = kalshi_.parse(record->payload, record->recv_ns);
-    } else {
-      ++stats_.polymarket_messages;
-      parsed = polymarket_.parse(record->payload, record->recv_ns);
-    }
+    {
+      const bool is_kalshi = record->venue == model::Venue::Kalshi;
+      if (is_kalshi) {
+        ++stats_.kalshi_messages;
+      } else {
+        ++stats_.polymarket_messages;
+      }
+      const feed::ParseResult parsed =
+          is_kalshi ? kalshi_.parse(record->payload, record->recv_ns, parse_mr)
+                    : polymarket_.parse(record->payload, record->recv_ns,
+                                        parse_mr);
 
-    switch (parsed.status) {
-      case feed::ParseStatus::Ok:
-        stats_.deltas += parsed.deltas.size();
-        break;
-      case feed::ParseStatus::Ignored:
-        ++stats_.ignored;
-        break;
-      case feed::ParseStatus::Malformed:
-        ++stats_.malformed;
-        break;
-    }
-    if (parsed.gap) ++stats_.gaps;
+      switch (parsed.status) {
+        case feed::ParseStatus::Ok:
+          stats_.deltas += parsed.deltas.size();
+          break;
+        case feed::ParseStatus::Ignored:
+          ++stats_.ignored;
+          break;
+        case feed::ParseStatus::Malformed:
+          ++stats_.malformed;
+          break;
+      }
+      if (parsed.gap) ++stats_.gaps;
 
-    for (const auto& delta : parsed.deltas) {
-      normalizer_.on_delta(delta);
+      for (const auto& delta : parsed.deltas) {
+        normalizer_.on_delta(delta);
+      }
     }
+    // parsed is gone; an arena can now drop the whole message at once.
+    if (parse_arena_) parse_arena_->release();
 
-    latency_.record(time::mono_ns() - t0);
+    const auto span = time::mono_ns() - t0;
+    latency_.record(span);
+    stats_.pipeline_ns += span;
   }
 
   stats_.malformed_lines = reader.malformed_lines();

@@ -1,5 +1,6 @@
 #include <charconv>
 #include <cstdio>
+#include <memory_resource>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -7,9 +8,14 @@
 
 #include "bench/replay_harness.h"
 #include "bench/synth_generator.h"
+#include "core/counting_resource.h"
 #include "core/logger.h"
 #include "core/version.h"
 #include "normalize/contract_registry.h"
+
+#ifdef BASIS_HAS_BDE
+#include "alloc/bde_arena.h"
+#endif
 
 #ifdef BASIS_HAS_NET
 #include <atomic>
@@ -33,9 +39,13 @@ int usage() {
       "      injected cross-venue lead; ids match configs/synthetic.toml)\n"
       "\n"
       "  basis replay <in.feedlog> [--config <contracts.toml>]\n"
+      "               [--alloc heap|count|bde]\n"
       "      replay a capture through parse -> normalize -> analytics -> api\n"
       "      and report basis, lead-lag, and ingest-to-signal latency\n"
       "      (default config: configs/synthetic.toml)\n"
+      "      --alloc count reports heap traffic per message; --alloc bde\n"
+      "      runs the hot path on Bloomberg bdlma arenas (needs a build\n"
+      "      with BASIS_ENABLE_BDE)\n"
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
@@ -158,11 +168,34 @@ void print_stats(const basis::bench::ReplayStats& stats) {
   }
 }
 
+// --alloc count: same heap allocator, with the traffic made visible.
+class CountingParseArena final : public basis::bench::ParseArena {
+ public:
+  std::pmr::memory_resource* resource() override { return &counting_; }
+  const basis::core::CountingResource& counts() const { return counting_; }
+
+ private:
+  basis::core::CountingResource counting_;
+};
+
+#ifdef BASIS_HAS_BDE
+// --alloc bde: parse transients on a sequential arena dropped per message.
+class BdeParseArena final : public basis::bench::ParseArena {
+ public:
+  std::pmr::memory_resource* resource() override { return arena_.resource(); }
+  void release() override { arena_.release(); }
+
+ private:
+  basis::alloc::BdeSequentialArena arena_;
+};
+#endif
+
 int run_replay(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
   const std::string in_path(args[0]);
   const auto config_path =
       flag_string(args, "--config", "configs/synthetic.toml");
+  const auto alloc_mode = flag_string(args, "--alloc", "heap");
 
   std::string error;
   const auto registry =
@@ -172,17 +205,64 @@ int run_replay(const std::vector<std::string_view>& args) {
     return 1;
   }
 
+  // Allocation setup outlives the harness: books free their nodes on
+  // destruction, so their resource has to be destroyed after it.
+  CountingParseArena counting_arena;
+  basis::core::CountingResource counting_books;
+#ifdef BASIS_HAS_BDE
+  BdeParseArena bde_arena;
+  basis::alloc::BdeMultipool bde_books;
+#endif
+
+  basis::bench::ParseArena* parse_arena = nullptr;
+  std::pmr::memory_resource* book_mr = std::pmr::get_default_resource();
+  if (alloc_mode == "count") {
+    parse_arena = &counting_arena;
+    book_mr = &counting_books;
+  } else if (alloc_mode == "bde") {
+#ifdef BASIS_HAS_BDE
+    parse_arena = &bde_arena;
+    book_mr = bde_books.resource();
+#else
+    basis::log::error("--alloc bde needs a build with BASIS_ENABLE_BDE=ON");
+    return 1;
+#endif
+  } else if (alloc_mode != "heap") {
+    basis::log::error("unknown --alloc mode: " + alloc_mode);
+    return usage();
+  }
+
   basis::api::InProcessSession session;
-  basis::bench::ReplayHarness harness(*registry, &session);
+  basis::bench::ReplayHarness harness(*registry, &session, {}, book_mr);
+  harness.set_parse_arena(parse_arena);
   const auto stats = harness.run(in_path, &error);
   if (!stats) {
     basis::log::error(error);
     return 1;
   }
 
-  std::printf("replayed %s against %s\n\n", in_path.c_str(),
-              config_path.c_str());
+  std::printf("replayed %s against %s (alloc %s)\n\n", in_path.c_str(),
+              config_path.c_str(), alloc_mode.c_str());
   print_stats(*stats);
+
+  std::printf("\npipeline  %.1f ms for %llu records (%.0fk records/sec)\n",
+              static_cast<double>(stats->pipeline_ns) / 1e6,
+              static_cast<unsigned long long>(stats->records),
+              stats->pipeline_ns > 0
+                  ? static_cast<double>(stats->records) * 1e6 /
+                        static_cast<double>(stats->pipeline_ns)
+                  : 0.0);
+  if (alloc_mode == "count" && stats->records > 0) {
+    const auto& parse = counting_arena.counts();
+    const double n = static_cast<double>(stats->records);
+    std::printf("allocs    parse %llu (%.1f/msg, %.0f B/msg), "
+                "books %llu (%.1f/msg)\n",
+                static_cast<unsigned long long>(parse.allocations()),
+                static_cast<double>(parse.allocations()) / n,
+                static_cast<double>(parse.bytes()) / n,
+                static_cast<unsigned long long>(counting_books.allocations()),
+                static_cast<double>(counting_books.allocations()) / n);
+  }
   return 0;
 }
 

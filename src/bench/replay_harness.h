@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory_resource>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -30,6 +31,7 @@ struct ReplayStats {
   std::uint64_t unmapped_deltas = 0;
 
   LatencyRecorder::Report latency;  // per-record ingest-to-signal
+  std::int64_t pipeline_ns = 0;     // sum of measured spans, excludes file io
 
   struct EventReport {
     std::string event_id;
@@ -43,6 +45,17 @@ struct ReplayStats {
   std::vector<EventReport> events;  // sorted by event id
 };
 
+// Per-message allocation context for the parse path. resource() backs each
+// message's ParseResult; release() runs after the message's deltas have
+// been consumed, so an arena implementation can drop everything at once.
+// The default-resource behavior is a null ParseArena*, not a subclass.
+class ParseArena {
+ public:
+  virtual ~ParseArena() = default;
+  virtual std::pmr::memory_resource* resource() = 0;
+  virtual void release() {}
+};
+
 // The composition root of the offline engine: reads a feedlog, runs each
 // record through parse -> normalize -> unified book -> analytics -> api, and
 // times the whole chain per record with the network already stripped away.
@@ -51,9 +64,16 @@ class ReplayHarness {
  public:
   // session may be null when nothing consumes updates (pure benchmarking);
   // fields published per event update: kalshi_mid, poly_mid, basis.
+  // book_mr backs the per-event order books and must outlive the harness.
   ReplayHarness(const normalize::ContractRegistry& registry,
                 api::InProcessSession* session = nullptr,
-                analytics::LeadLagConfig lead_lag_config = {});
+                analytics::LeadLagConfig lead_lag_config = {},
+                std::pmr::memory_resource* book_mr =
+                    std::pmr::get_default_resource());
+
+  // Backs each message's parse transients; null means the default resource.
+  // Must outlive run().
+  void set_parse_arena(ParseArena* arena) { parse_arena_ = arena; }
 
   // Replays at max rate. Nullopt only if the file cannot be opened.
   std::optional<ReplayStats> run(const std::string& feedlog_path,
@@ -71,6 +91,7 @@ class ReplayHarness {
   feed::KalshiParser kalshi_;
   feed::PolymarketParser polymarket_;
   normalize::Normalizer normalizer_;
+  ParseArena* parse_arena_ = nullptr;
 
   struct EventAnalytics {
     analytics::DivergenceTracker divergence;
