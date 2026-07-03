@@ -3,8 +3,9 @@
 #include <cstdint>
 #include <functional>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 
+#include "core/hash.h"
 #include "model/book_delta.h"
 #include "model/unified_book.h"
 #include "normalize/contract_registry.h"
@@ -31,14 +32,14 @@ class Normalizer {
   // True if the delta was mapped to an event and applied.
   bool on_delta(const model::BookDelta& delta);
 
-  const model::UnifiedBook* book(const std::string& event_id) const;
+  const model::UnifiedBook* book(std::string_view event_id) const;
 
   std::uint64_t unmapped_deltas() const { return unmapped_; }
 
  private:
   const ContractRegistry& registry_;
   Observer observer_;
-  std::unordered_map<std::string, model::UnifiedBook> books_;
+  core::StringMap<model::UnifiedBook> books_;
   std::uint64_t unmapped_ = 0;
 };
 
