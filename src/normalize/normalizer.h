@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory_resource>
 #include <string>
 #include <string_view>
 
@@ -24,8 +25,13 @@ class Normalizer {
                                       const model::UnifiedBook& book,
                                       const model::BookDelta& delta)>;
 
-  explicit Normalizer(const ContractRegistry& registry)
-      : registry_(registry) {}
+  // `book_mr` backs the per-event order books' level nodes; the default is
+  // the global heap. The books outlive any parse arena, so this must be a
+  // long-lived resource (a node pool, not a per-message arena).
+  explicit Normalizer(const ContractRegistry& registry,
+                      std::pmr::memory_resource* book_mr =
+                          std::pmr::get_default_resource())
+      : registry_(registry), book_mr_(book_mr) {}
 
   void set_observer(Observer observer) { observer_ = std::move(observer); }
 
@@ -38,6 +44,7 @@ class Normalizer {
 
  private:
   const ContractRegistry& registry_;
+  std::pmr::memory_resource* book_mr_;
   Observer observer_;
   core::StringMap<model::UnifiedBook> books_;
   std::uint64_t unmapped_ = 0;
