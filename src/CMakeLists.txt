@@ -56,6 +56,33 @@ target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
 add_executable(basis main.cpp)
 target_link_libraries(basis PRIVATE basis_bench)
 
+# Bloomberg bdlma allocators: only with BASIS_ENABLE_BDE. One TU, pinned
+# to C++17 because that is the dialect Homebrew's BDE archives are built
+# with and bsls rejects mixing dialects at link time. The TU exposes the
+# allocators as std::pmr::memory_resource, whose libc++/libstdc++ ABI does
+# not vary by dialect, so the C++20 engine consumes them safely.
+if(BASIS_ENABLE_BDE)
+  add_library(basis_alloc_bde
+    alloc/bde_arena.cpp
+  )
+  target_include_directories(basis_alloc_bde
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_include_directories(basis_alloc_bde SYSTEM
+    PRIVATE ${BASIS_BDE_INCLUDE_DIR})
+  target_link_libraries(basis_alloc_bde
+    PUBLIC ${BASIS_BDL_LIBRARY} ${BASIS_BSL_LIBRARY})
+  set_target_properties(basis_alloc_bde PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # BDE assumes sized deallocation, which Apple clang leaves off.
+    target_compile_options(basis_alloc_bde PRIVATE -fsized-deallocation)
+  endif()
+
+  target_link_libraries(basis PRIVATE basis_alloc_bde)
+  target_compile_definitions(basis PRIVATE BASIS_HAS_BDE=1)
+endif()
+
 # Live feeds: only with BASIS_ENABLE_NET, so the default build needs
 # neither Boost nor OpenSSL.
 if(BASIS_ENABLE_NET)
