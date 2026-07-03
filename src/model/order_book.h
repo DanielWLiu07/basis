@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory_resource>
 #include <optional>
 
 #include "model/book_delta.h"
@@ -11,8 +12,16 @@ namespace basis::model {
 
 // One venue's order book for a single market. Bids are kept high-to-low, asks
 // low-to-high. A level whose size drops to zero is removed. Prices are cents.
+//
+// Levels live in node-based maps, so steady-state updates are node churn:
+// one allocation per level insert, one free per erase. The constructor takes
+// a memory_resource so that churn can come from a pool tuned for fixed-size
+// nodes instead of the global heap.
 class OrderBook {
  public:
+  OrderBook() = default;
+  explicit OrderBook(std::pmr::memory_resource* mr) : bids_(mr), asks_(mr) {}
+
   void apply(const BookDelta& delta);
   void clear();
 
@@ -23,8 +32,8 @@ class OrderBook {
   bool empty() const { return bids_.empty() && asks_.empty(); }
 
  private:
-  std::map<int, std::int64_t, std::greater<int>> bids_;
-  std::map<int, std::int64_t> asks_;
+  std::pmr::map<int, std::int64_t, std::greater<int>> bids_;
+  std::pmr::map<int, std::int64_t> asks_;
 };
 
 }  // namespace basis::model

@@ -12,7 +12,8 @@ bool Normalizer::on_delta(const model::BookDelta& delta) {
   // common case is one hash probe with no key materialization.
   auto it = books_.find(*event_id);
   if (it == books_.end()) {
-    it = books_.emplace(std::string(*event_id), model::UnifiedBook{}).first;
+    it = books_.emplace(std::string(*event_id), model::UnifiedBook(book_mr_))
+             .first;
   }
   auto& book = it->second;
   book.apply(delta);

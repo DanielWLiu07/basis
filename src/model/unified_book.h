@@ -12,6 +12,11 @@ namespace basis::model {
 // tracks. Plain data: no callbacks, no threads, no venue JSON.
 class UnifiedBook {
  public:
+  UnifiedBook() = default;
+  // Both venue books draw their level nodes from `mr`.
+  explicit UnifiedBook(std::pmr::memory_resource* mr)
+      : kalshi_(mr), polymarket_(mr) {}
+
   void apply(const BookDelta& delta);  // routes on delta.venue
 
   const OrderBook& book(Venue venue) const;
