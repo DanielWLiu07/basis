@@ -19,9 +19,12 @@ for low internal latency and zero message loss.
 The offline engine runs end to end: real venue wire formats are parsed,
 normalized into per-event unified books, and measured for basis, lead-lag,
 and per-record ingest-to-signal latency, all driven by deterministic replay.
-Live WebSocket adapters are the next phase; they slot in behind the same
-`FeedAdapter` seam. See `PLAN.md` for the full spec and `docs/design.md` for
-how the code is put together.
+The live Polymarket feed records real sessions over TLS WebSocket; the
+Kalshi feed (authenticated) is the next phase and slots in behind the same
+`FeedAdapter` seam. The hot path is zero-copy and allocator-instrumented,
+benchmarked against Bloomberg's BDE arenas (`docs/bench/allocator.md`).
+See `PLAN.md` for the full spec and `docs/design.md` for how the code is
+put together.
 
 ## Build and run
 
@@ -45,8 +48,10 @@ per-event basis statistics, the recovered lead, and ingest-to-signal latency
 percentiles. The same closed loop runs in the test suite: if the engine
 cannot recover an injected lead through the real parsers, the build is red.
 
-The configure pulls GoogleTest and simdjson. The BDE allocator path comes
-online behind `BASIS_ENABLE_BDE` in a later phase.
+The configure pulls GoogleTest and simdjson. With `-DBASIS_ENABLE_BDE=ON`
+(`brew install bde` on macOS), `replay --alloc bde` runs the hot path on
+Bloomberg `bdlma` arenas and `--alloc count` reports heap traffic per
+message; `docs/bench/allocator.md` records what those measured.
 
 ## Live capture
 
@@ -80,10 +85,15 @@ feed (Kalshi, Polymarket)  ->  normalize + match  ->  unified order book
                                           BLPAPI-style subscription API
 ```
 
-The hot parse-and-normalize path is allocator-aware, built on Bloomberg's
-open-source BDE (`bdlma`) arenas. The consumer interface mirrors Bloomberg's
-BLPAPI subscription model. Internal ingest-to-signal latency is measured by
-deterministic replay (network jitter removed) and reported in percentiles.
+The hot parse-and-normalize path is zero-copy (market ids are views into
+the parser buffer) and every allocation site draws from an injectable
+`std::pmr` resource. Bloomberg's open-source BDE (`bdlma`) arenas plug
+into those seams; measured against the global heap they came out at
+parity, because the zero-copy path leaves only 1-2 allocations per message
+(`docs/bench/allocator.md`), so the heap default ships. The consumer
+interface mirrors Bloomberg's BLPAPI subscription model. Internal
+ingest-to-signal latency is measured by deterministic replay (network
+jitter removed) and reported in percentiles.
 
 Note: this project uses Bloomberg's open-source libraries and API design. It
 does not use Bloomberg data, which is licensed and not redistributable. The
@@ -108,5 +118,11 @@ docs/           design notes, venue API notes, benchmark artifacts
 ## Numbers
 
 Filled in only from committed benchmarks, never aspirational (the same rule the
-companion voxel-engine project follows). Until Phase 4/5 land, the headline
-figures in `PLAN.md` are bracketed placeholders.
+companion voxel-engine project follows). Recorded so far:
+
+- `docs/bench/allocator.md`: hot path at 1-2 heap allocations per message,
+  3.7M records/sec max-rate replay on an Apple M4, bdlma arenas at parity
+  with the global heap.
+
+The remaining headline figures in `PLAN.md` stay bracketed placeholders
+until their phases land.

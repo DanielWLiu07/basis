@@ -118,7 +118,7 @@ that first needs them, each behind a CMake option:
 | 0     | 1     | Repo, CMake, CI (build+test+sanitizers), README stub, model types | green CI                               |
 | 1     | 2-3   | Kalshi feed: live book, snapshot+delta, reconnect, gap re-snapshot | -                                      |
 | 2     | 4-5   | Polymarket feed: live book, same reliability                       | -                                      |
-| 3     | 6-7   | Normalize + contract match; hot path through bdlma arena           | allocator throughput win %             |
+| 3     | 6-7   | Normalize + contract match; hot path through bdlma arena           | allocs/msg, arena vs heap (done: parity) |
 | 4     | 8-9   | Record/replay harness + HdrHistogram instrumentation               | p99 ingest->signal (us), throughput     |
 | 5     | 10-12 | Divergence (basis) + lead-lag estimator over recorded sessions     | N-second cross-venue lead (+ N samples)|
 | 6     | 13-15 | BLPAPI-style subscription API; bench wired to CI gate; README      | zero loss across K reconnect/gap events|
@@ -150,7 +150,11 @@ view, Tracy capture.
 
 - `p99 [Y] us` ingest-to-signal (engine internal latency, via replay)
 - `[X]` msgs/sec sustained (max-rate replay)
-- `[Z]%` allocator throughput win (bdlma arena vs global heap)
+- allocator: measured parity, filled 2026-07-02 (docs/bench/allocator.md).
+  The zero-copy hot path runs at 1 to 2 heap allocations per message,
+  verified by a counting memory_resource and pinned by a budget test, so
+  bdlma arenas neither gain nor cost throughput at 3.7M records/sec replay.
+  Heap stays the default; the measurement is the deliverable.
 - `[N]`-second cross-venue lead (with sample size)
 - zero message loss across `[K]` reconnect/gap events
 
@@ -171,7 +175,9 @@ view, Tracy capture.
 ## Resume line (final form, brackets filled from docs/bench/)
 
 > Real-Time Cross-Venue Prediction-Market Data Engine - C++20 engine ingesting
-> Kalshi and Polymarket order books, normalized through an allocator-aware hot
-> path on Bloomberg's BDE with a BLPAPI-style subscription interface; p99 [Y] us
-> ingest-to-signal at [X] msgs/sec, measured a [N]-second cross-venue price
-> lead, zero message loss, reproducible from a CI-gated benchmark.
+> Kalshi and Polymarket order books through a zero-copy hot path, proven at
+> 1-2 heap allocations per message and at parity with Bloomberg BDE arenas
+> by a counting-allocator benchmark, with a BLPAPI-style subscription
+> interface; p99 [Y] us ingest-to-signal at [X] msgs/sec, measured a
+> [N]-second cross-venue price lead, zero message loss, reproducible from a
+> CI-gated benchmark.
