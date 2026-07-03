@@ -53,6 +53,29 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # macOS only: Homebrew bottles BDE; Linux has no packaged BDE and building
+  # it from source is too heavy for a per-commit job.
+  bde-build:
+    name: bde build (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install BDE
+        run: brew install bde
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_ENABLE_BDE=ON
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Allocator smoke (arena + counting replay)
+        run: |
+          ./build/src/basis synth demo.feedlog --steps 2000 --lead-ms 400
+          ./build/src/basis replay demo.feedlog --config configs/synthetic.toml --alloc bde
+          ./build/src/basis replay demo.feedlog --config configs/synthetic.toml --alloc count
+
   sanitizers:
     name: ${{ matrix.san }}
     runs-on: ubuntu-latest
