@@ -1,7 +1,6 @@
 #include "feed/polymarket_parser.h"
 
 #include <optional>
-#include <string>
 
 namespace basis::feed {
 
@@ -73,7 +72,7 @@ std::optional<std::int64_t> parse_size(std::string_view s) {
 
 bool append_book_side(const element& event, const char* key, model::Side side,
                       const model::BookDelta& base,
-                      std::vector<model::BookDelta>& out) {
+                      std::pmr::vector<model::BookDelta>& out) {
   const auto field = event[key];
   if (field.error() == NO_SUCH_FIELD) {
     return true;  // absent side is a legal empty book
@@ -113,7 +112,7 @@ bool handle_event(const element& event, std::int64_t recv_ns,
     std::string_view asset_id;
     if (event["asset_id"].get_string().get(asset_id) != SUCCESS) return false;
     const model::BookDelta base{.venue = model::Venue::Polymarket,
-                                .market = std::string(asset_id),
+                                .market = asset_id,
                                 .ts_ns = recv_ns};
     // Snapshot: clear, then set every level.
     model::BookDelta clear = base;
@@ -150,7 +149,7 @@ bool handle_event(const element& event, std::int64_t recv_ns,
       if (!price || !size) return false;
       result.deltas.push_back(
           {.venue = model::Venue::Polymarket,
-           .market = std::string(asset_id),
+           .market = asset_id,
            .action = model::Action::Set,
            .side = side_s == "BUY" ? model::Side::Bid : model::Side::Ask,
            .price_cents = *price,
@@ -166,8 +165,9 @@ bool handle_event(const element& event, std::int64_t recv_ns,
 }  // namespace
 
 ParseResult PolymarketParser::parse(std::string_view raw,
-                                    std::int64_t recv_ns) {
-  ParseResult result;
+                                    std::int64_t recv_ns,
+                                    std::pmr::memory_resource* mr) {
+  ParseResult result(mr);
 
   element doc;
   if (parser_.parse(raw.data(), raw.size()).get(doc) != SUCCESS) {

@@ -20,7 +20,7 @@ bool valid_wire_price(std::int64_t price) { return price >= 1 && price <= 99; }
 bool append_snapshot_side(const element& msg, const char* key,
                           model::Side side, bool fold_price,
                           const model::BookDelta& base,
-                          std::vector<model::BookDelta>& out) {
+                          std::pmr::vector<model::BookDelta>& out) {
   const auto field = msg[key];
   if (field.error() == NO_SUCH_FIELD) {
     return true;  // side absent entirely is a legal empty book
@@ -51,8 +51,9 @@ bool append_snapshot_side(const element& msg, const char* key,
 
 }  // namespace
 
-ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
-  ParseResult result;
+ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns,
+                                std::pmr::memory_resource* mr) {
+  ParseResult result(mr);
 
   element doc;
   if (parser_.parse(raw.data(), raw.size()).get(doc) != SUCCESS) {
@@ -83,7 +84,7 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
                        doc["sid"].get_uint64().get(sid) == SUCCESS;
 
   const model::BookDelta base{.venue = model::Venue::Kalshi,
-                              .market = std::string(ticker),
+                              .market = ticker,
                               .seq = seq,
                               .ts_ns = recv_ns};
 
@@ -102,7 +103,7 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
       return result;
     }
     if (has_seq) last_seq_[sid] = seq;
-    snapshotted_.insert(base.market);
+    snapshotted_.emplace(base.market);  // ledger outlives the view: copy
     result.status = ParseStatus::Ok;
     return result;
   }
@@ -126,7 +127,7 @@ ParseResult KalshiParser::parse(std::string_view raw, std::int64_t recv_ns) {
     }
     last_seq_[sid] = seq;
   }
-  if (snapshotted_.insert(base.market).second) {
+  if (snapshotted_.emplace(base.market).second) {
     // First sight of this market is a delta: there is no book to apply it
     // to. Flag once; the live feed answers a gap with a re-snapshot.
     result.gap = true;
