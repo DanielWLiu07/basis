@@ -87,6 +87,7 @@ endif()
 # neither Boost nor OpenSSL.
 if(BASIS_ENABLE_NET)
   add_library(basis_net
+    net/kalshi_auth.cpp
     net/ws_client.cpp
   )
   target_link_libraries(basis_net PUBLIC basis_core

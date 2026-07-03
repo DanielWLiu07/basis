@@ -21,6 +21,10 @@ if(BASIS_ENABLE_BDE)
   target_sources(basis_tests PRIVATE test_bde_arena.cpp)
   target_link_libraries(basis_tests PRIVATE basis_alloc_bde)
 endif()
+if(BASIS_ENABLE_NET)
+  target_sources(basis_tests PRIVATE test_kalshi_auth.cpp)
+  target_link_libraries(basis_tests PRIVATE basis_feed_live)
+endif()
 # Lets tests load checked-in configs relative to the repo, not the build dir.
 target_compile_definitions(basis_tests PRIVATE
   BASIS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
