@@ -21,10 +21,14 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <memory>
+#include <mutex>
 #include <thread>
 
 #include "feed/feed_log.h"
+#include "feed/kalshi_feed.h"
 #include "feed/polymarket_feed.h"
+#include "net/kalshi_auth.h"
 #endif
 
 namespace {
@@ -49,9 +53,12 @@ int usage() {
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
-      "      capture live feeds for the configured contracts (Polymarket\n"
-      "      needs no credentials); stop with --seconds or ctrl-c\n"
-      "      (default config: configs/contracts.toml)\n"
+      "               [--kalshi-key-id ID] [--kalshi-pem <key.pem>]\n"
+      "      capture live feeds for the configured contracts; stop with\n"
+      "      --seconds or ctrl-c (default config: configs/contracts.toml).\n"
+      "      Polymarket needs no credentials. Kalshi joins the capture when\n"
+      "      --kalshi-key-id is given (RSA key from --kalshi-pem, default\n"
+      "      secrets/kalshi.pem, never committed)\n"
 #endif
       ,
       basis::kVersion);
@@ -282,6 +289,9 @@ int run_record(const std::vector<std::string_view>& args) {
     basis::log::error("record: bad --seconds value");
     return usage();
   }
+  const auto kalshi_key_id = flag_string(args, "--kalshi-key-id", "");
+  const auto kalshi_pem =
+      flag_string(args, "--kalshi-pem", "secrets/kalshi.pem");
 
   std::string error;
   const auto registry =
@@ -291,6 +301,7 @@ int run_record(const std::vector<std::string_view>& args) {
     return 1;
   }
   const auto& tokens = registry->polymarket_tokens();
+  const auto& tickers = registry->kalshi_tickers();
   if (tokens.empty()) {
     basis::log::error("no polymarket tokens in " + config_path +
                       "; nothing to record");
@@ -303,29 +314,63 @@ int run_record(const std::vector<std::string_view>& args) {
     return 1;
   }
 
-  // The raw tap runs on the feed's IO thread and is its only writer user;
-  // rejected writes are counted, per the no-silent-drop rule.
+  // The raw taps run on each feed's IO thread; the mutex serializes the
+  // two writers into one feedlog. Rejected writes are counted, per the
+  // no-silent-drop rule.
+  std::mutex writer_mutex;
   std::atomic<std::uint64_t> written{0};
   std::atomic<std::uint64_t> rejected{0};
-  basis::feed::PolymarketFeed feed({.token_ids = tokens});
-  feed.set_raw_tap([&](std::string_view payload, std::int64_t recv_ns) {
-    std::string framed(payload);
-    // Some messages arrive with embedded newlines; outside JSON strings
-    // whitespace is insignificant, so flattening keeps the payload valid
-    // instead of losing a real message to the line framing.
-    for (char& c : framed) {
-      if (c == '\n' || c == '\r') c = ' ';
+  const auto make_tap = [&](basis::model::Venue venue) {
+    return [&, venue](std::string_view payload, std::int64_t recv_ns) {
+      std::string framed(payload);
+      // Some messages arrive with embedded newlines; outside JSON strings
+      // whitespace is insignificant, so flattening keeps the payload valid
+      // instead of losing a real message to the line framing.
+      for (char& c : framed) {
+        if (c == '\n' || c == '\r') c = ' ';
+      }
+      bool ok = false;
+      {
+        const std::lock_guard<std::mutex> lock(writer_mutex);
+        ok = writer.write({recv_ns, venue, std::move(framed)});
+      }
+      (ok ? written : rejected).fetch_add(1);
+    };
+  };
+
+  basis::feed::PolymarketFeed poly_feed({.token_ids = tokens});
+  poly_feed.set_raw_tap(make_tap(basis::model::Venue::Polymarket));
+
+  // Kalshi requires an authenticated session even for market data; without
+  // credentials the recording is Polymarket-only, stated up front rather
+  // than discovered in the replay.
+  std::unique_ptr<basis::feed::KalshiFeed> kalshi_feed;
+  if (!kalshi_key_id.empty()) {
+    auto signer = basis::net::KalshiSigner::load(kalshi_pem, &error);
+    if (!signer) {
+      basis::log::error(error);
+      return 1;
     }
-    const bool ok = writer.write(
-        {recv_ns, basis::model::Venue::Polymarket, std::move(framed)});
-    (ok ? written : rejected).fetch_add(1);
-  });
+    if (tickers.empty()) {
+      basis::log::error("no kalshi tickers in " + config_path);
+      return 1;
+    }
+    kalshi_feed = std::make_unique<basis::feed::KalshiFeed>(
+        basis::feed::KalshiFeed::Config{.market_tickers = tickers,
+                                        .key_id = kalshi_key_id,
+                                        .signer = std::move(*signer)});
+    kalshi_feed->set_raw_tap(make_tap(basis::model::Venue::Kalshi));
+  }
 
   std::signal(SIGINT, handle_sigint);
-  std::printf("recording %zu polymarket token(s) -> %s%s\n", tokens.size(),
-              out_path.c_str(),
-              *seconds > 0 ? "" : "  (ctrl-c to stop)");
-  feed.start();
+  std::printf("recording %zu polymarket token(s)%s -> %s%s\n", tokens.size(),
+              kalshi_feed
+                  ? (" + " + std::to_string(tickers.size()) +
+                     " kalshi ticker(s)").c_str()
+                  : " (no kalshi credentials, polymarket only)",
+              out_path.c_str(), *seconds > 0 ? "" : "  (ctrl-c to stop)");
+  poly_feed.start();
+  if (kalshi_feed) kalshi_feed->start();
 
   const auto started = std::chrono::steady_clock::now();
   auto next_report = started + std::chrono::seconds(5);
@@ -337,24 +382,38 @@ int run_record(const std::vector<std::string_view>& args) {
     }
     if (now >= next_report) {
       next_report += std::chrono::seconds(5);
-      std::printf("  %llu msgs  %.1f KiB  %llu deltas  %llu malformed  "
-                  "%llu reconnects\n",
-                  static_cast<unsigned long long>(feed.messages()),
-                  static_cast<double>(feed.bytes()) / 1024.0,
-                  static_cast<unsigned long long>(feed.deltas()),
-                  static_cast<unsigned long long>(feed.malformed()),
-                  static_cast<unsigned long long>(feed.reconnects()));
+      std::printf("  poly %llu msgs %llu deltas %llu malformed %llu recon",
+                  static_cast<unsigned long long>(poly_feed.messages()),
+                  static_cast<unsigned long long>(poly_feed.deltas()),
+                  static_cast<unsigned long long>(poly_feed.malformed()),
+                  static_cast<unsigned long long>(poly_feed.reconnects()));
+      if (kalshi_feed) {
+        std::printf("  |  kalshi %llu msgs %llu deltas %llu gaps %llu recon",
+                    static_cast<unsigned long long>(kalshi_feed->messages()),
+                    static_cast<unsigned long long>(kalshi_feed->deltas()),
+                    static_cast<unsigned long long>(kalshi_feed->gaps()),
+                    static_cast<unsigned long long>(
+                        kalshi_feed->reconnects()));
+      }
+      std::printf("\n");
     }
   }
-  feed.stop();
+  poly_feed.stop();
+  if (kalshi_feed) kalshi_feed->stop();
 
-  std::printf("wrote %llu records to %s (%llu rejected, %llu malformed, "
-              "%llu reconnects)\n",
+  std::printf("wrote %llu records to %s (%llu rejected)\n",
               static_cast<unsigned long long>(written.load()),
               out_path.c_str(),
-              static_cast<unsigned long long>(rejected.load()),
-              static_cast<unsigned long long>(feed.malformed()),
-              static_cast<unsigned long long>(feed.reconnects()));
+              static_cast<unsigned long long>(rejected.load()));
+  std::printf("  polymarket: %llu malformed, %llu reconnects\n",
+              static_cast<unsigned long long>(poly_feed.malformed()),
+              static_cast<unsigned long long>(poly_feed.reconnects()));
+  if (kalshi_feed) {
+    std::printf("  kalshi: %llu malformed, %llu gaps, %llu reconnects\n",
+                static_cast<unsigned long long>(kalshi_feed->malformed()),
+                static_cast<unsigned long long>(kalshi_feed->gaps()),
+                static_cast<unsigned long long>(kalshi_feed->reconnects()));
+  }
   std::printf("replay it:  basis replay %s --config %s\n", out_path.c_str(),
               config_path.c_str());
   return 0;
