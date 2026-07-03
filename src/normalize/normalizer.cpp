@@ -8,13 +8,19 @@ bool Normalizer::on_delta(const model::BookDelta& delta) {
     ++unmapped_;
     return false;
   }
-  auto& book = books_[*event_id];
+  // Heterogeneous find first: in steady state the event exists, so the
+  // common case is one hash probe with no key materialization.
+  auto it = books_.find(*event_id);
+  if (it == books_.end()) {
+    it = books_.emplace(std::string(*event_id), model::UnifiedBook{}).first;
+  }
+  auto& book = it->second;
   book.apply(delta);
-  if (observer_) observer_(*event_id, book, delta);
+  if (observer_) observer_(it->first, book, delta);
   return true;
 }
 
-const model::UnifiedBook* Normalizer::book(const std::string& event_id) const {
+const model::UnifiedBook* Normalizer::book(std::string_view event_id) const {
   const auto it = books_.find(event_id);
   return it == books_.end() ? nullptr : &it->second;
 }

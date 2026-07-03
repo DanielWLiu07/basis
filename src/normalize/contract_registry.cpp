@@ -136,13 +136,13 @@ std::optional<TomlContractRegistry> TomlContractRegistry::parse(
   return registry;
 }
 
-std::optional<std::string> TomlContractRegistry::event_id(
-    model::Venue venue, const std::string& market) const {
+std::optional<std::string_view> TomlContractRegistry::event_id(
+    model::Venue venue, std::string_view market) const {
   const auto& map = (venue == model::Venue::Kalshi) ? kalshi_to_event_
                                                     : polymarket_to_event_;
   const auto it = map.find(market);
   if (it == map.end()) return std::nullopt;
-  return it->second;
+  return std::string_view(it->second);
 }
 
 }  // namespace basis::normalize

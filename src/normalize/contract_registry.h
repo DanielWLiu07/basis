@@ -3,9 +3,9 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
+#include "core/hash.h"
 #include "model/types.h"
 
 namespace basis::normalize {
@@ -17,9 +17,12 @@ class ContractRegistry {
  public:
   virtual ~ContractRegistry() = default;
 
-  // Canonical event id for a (venue, market) pair, if one is mapped.
-  virtual std::optional<std::string> event_id(
-      model::Venue venue, const std::string& market) const = 0;
+  // Canonical event id for a (venue, market) pair, if one is mapped. The
+  // view aliases storage owned by the registry and stays valid for the
+  // registry's lifetime; returning a view keeps the per-delta lookup free
+  // of allocation.
+  virtual std::optional<std::string_view> event_id(
+      model::Venue venue, std::string_view market) const = 0;
 };
 
 // Registry backed by the contracts.toml subset:
@@ -40,8 +43,8 @@ class TomlContractRegistry final : public ContractRegistry {
   static std::optional<TomlContractRegistry> parse(std::string_view text,
                                                    std::string* error = nullptr);
 
-  std::optional<std::string> event_id(
-      model::Venue venue, const std::string& market) const override;
+  std::optional<std::string_view> event_id(
+      model::Venue venue, std::string_view market) const override;
 
   const std::vector<std::string>& event_ids() const { return event_ids_; }
 
@@ -56,8 +59,8 @@ class TomlContractRegistry final : public ContractRegistry {
  private:
   TomlContractRegistry() = default;
 
-  std::unordered_map<std::string, std::string> kalshi_to_event_;
-  std::unordered_map<std::string, std::string> polymarket_to_event_;
+  core::StringMap<std::string> kalshi_to_event_;
+  core::StringMap<std::string> polymarket_to_event_;
   std::vector<std::string> event_ids_;
   std::vector<std::string> kalshi_tickers_;
   std::vector<std::string> polymarket_tokens_;
