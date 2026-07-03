@@ -19,12 +19,13 @@ for low internal latency and zero message loss.
 The offline engine runs end to end: real venue wire formats are parsed,
 normalized into per-event unified books, and measured for basis, lead-lag,
 and per-record ingest-to-signal latency, all driven by deterministic replay.
-The live Polymarket feed records real sessions over TLS WebSocket; the
-Kalshi feed (authenticated) is the next phase and slots in behind the same
-`FeedAdapter` seam. The hot path is zero-copy and allocator-instrumented,
-benchmarked against Bloomberg's BDE arenas (`docs/bench/allocator.md`).
-See `PLAN.md` for the full spec and `docs/design.md` for how the code is
-put together.
+Both live feeds are built behind the same `FeedAdapter` seam: Polymarket
+records real sessions over TLS WebSocket, and the Kalshi adapter (signed
+session, gap-triggered re-snapshot) is verified offline down to the RSA-PSS
+signature and waits only on account credentials for its first live capture.
+The hot path is zero-copy and allocator-instrumented, benchmarked against
+Bloomberg's BDE arenas (`docs/bench/allocator.md`). See `PLAN.md` for the
+full spec and `docs/design.md` for how the code is put together.
 
 ## Build and run
 
@@ -69,10 +70,19 @@ cmake --build build-net -j
 
 `configs/contracts.toml` maps real cross-venue contracts (2026 World Cup
 winners, Fed decisions) between Kalshi tickers and Polymarket token ids.
-The Kalshi live feed requires an authenticated session (free account + RSA
-API key) and is the next phase; until both venues stream, replay reports
-each event's Polymarket book and flags the missing overlap rather than
-inventing a basis.
+
+Kalshi requires an authenticated session even for market data (free
+account + RSA API key). With credentials, the same command captures both
+venues into one feedlog:
+
+```
+./build-net/src/basis record captures/live.feedlog --seconds 60 \
+    --kalshi-key-id <your-key-id> --kalshi-pem secrets/kalshi.pem
+```
+
+The key file lives under gitignored `secrets/` and never enters the repo.
+Until both venues stream, replay reports each event's one-sided book and
+flags the missing overlap rather than inventing a basis.
 
 ## Design at a glance
 

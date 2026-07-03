@@ -30,8 +30,14 @@ visible.
 - **Prices**: integer cents, 1..99 (already our canonical unit).
 
 **Prerequisite (action item):** a Kalshi account + generated API key (RSA key
-pair). Free to create. The key is loaded from env / a local-only file, never
+pair). Free to create. The key is loaded from a local-only file, never
 committed (.gitignore covers `.env`, `secrets/`).
+
+The client side is built and verified offline (net/kalshi_auth signs and a
+test verifies against the public key with Kalshi's documented PSS
+parameters; feed/kalshi_feed re-signs per reconnect and answers gaps with
+unsubscribe + subscribe). First live session:
+`basis record out.feedlog --kalshi-key-id <id> --kalshi-pem secrets/kalshi.pem`.
 
 ## Polymarket
 
