@@ -45,6 +45,10 @@ void WsClient::set_on_message(MessageHandler handler) {
   on_message_ = std::move(handler);
 }
 
+void WsClient::set_header_provider(HeaderProvider provider) {
+  header_provider_ = std::move(provider);
+}
+
 void WsClient::start() {
   if (running_.exchange(true)) return;
   io_thread_ = std::thread([this] { run(); });
@@ -115,8 +119,19 @@ void WsClient::run() {
           websocket::stream_base::timeout::suggested(beast::role_type::client);
       timeout.keep_alive_pings = true;
       conn->ws.set_option(timeout);
+      // Fresh per-connect headers before the static ones: a timestamped
+      // signature minted at construction time would be stale by now.
+      const auto minted = header_provider_
+                              ? header_provider_()
+                              : std::vector<std::pair<std::string,
+                                                      std::string>>{};
+      // The decorator outlives this scope inside the stream object, so it
+      // captures by value.
       conn->ws.set_option(websocket::stream_base::decorator(
-          [this](websocket::request_type& req) {
+          [this, minted](websocket::request_type& req) {
+            for (const auto& [name, value] : minted) {
+              req.set(name, value);
+            }
             for (const auto& [name, value] : config_.headers) {
               req.set(name, value);
             }
