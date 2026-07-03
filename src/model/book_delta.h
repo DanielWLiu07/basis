@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
+#include <string_view>
 
 #include "model/types.h"
 
@@ -19,15 +19,22 @@ enum class Action : std::uint8_t {
 
 // One price-level update on one venue's book. Prediction-market contracts
 // trade in cents (1..99c), which is also the implied probability.
+//
+// `market` is a view into the producing parser's buffer, not owned storage:
+// Polymarket asset ids run ~77 digits, and copying one per delta would put
+// a heap allocation on every message. The view is valid until the next
+// parse() on the same parser, so deltas must be consumed synchronously;
+// anything that retains a delta (the Kalshi parser's snapshot ledger, the
+// normalizer's event map) copies what it keeps.
 struct BookDelta {
-  Venue         venue       = Venue::Kalshi;
-  std::string   market;             // venue-native market id
-  Action        action      = Action::Set;
-  Side          side        = Side::Bid;
-  int           price_cents = 0;    // parsers enforce 0..100 (Kalshi wire: 1..99)
-  std::int64_t  size        = 0;    // meaning depends on action
-  std::uint64_t seq         = 0;    // venue sequence number (gap detection)
-  std::int64_t  ts_ns       = 0;    // ingest timestamp, ns since epoch
+  Venue            venue       = Venue::Kalshi;
+  std::string_view market;          // venue-native market id (see above)
+  Action           action      = Action::Set;
+  Side             side        = Side::Bid;
+  int              price_cents = 0; // parsers enforce 0..100 (Kalshi wire: 1..99)
+  std::int64_t     size        = 0; // meaning depends on action
+  std::uint64_t    seq         = 0; // venue sequence number (gap detection)
+  std::int64_t     ts_ns       = 0; // ingest timestamp, ns since epoch
 };
 
 constexpr const char* to_string(Action a) {

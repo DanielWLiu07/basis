@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory_resource>
 #include <string_view>
 
 #include <simdjson.h>
@@ -26,7 +27,10 @@ namespace basis::feed {
 // with the live feed, not here.
 class PolymarketParser {
  public:
-  ParseResult parse(std::string_view raw, std::int64_t recv_ns);
+  // `mr` backs the result's deltas vector; see ParseResult for lifetime.
+  ParseResult parse(std::string_view raw, std::int64_t recv_ns,
+                    std::pmr::memory_resource* mr =
+                        std::pmr::get_default_resource());
 
  private:
   simdjson::dom::parser parser_;
