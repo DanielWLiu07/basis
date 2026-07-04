@@ -32,6 +32,7 @@ struct PendingEvent {
   std::string id;
   std::string kalshi;
   std::string polymarket_token;
+  std::string polymarket_no_token;
   bool open = false;
 };
 
@@ -78,6 +79,21 @@ std::optional<TomlContractRegistry> TomlContractRegistry::parse(
         return false;
       }
       registry.polymarket_tokens_.push_back(event.polymarket_token);
+    }
+    if (!event.polymarket_no_token.empty()) {
+      // The NO token maps to the same event but is folded on arrival, so
+      // it shares the duplicate check with every other Polymarket id. It
+      // is not a subscribe key: the venue pushes the NO book unasked for
+      // any subscribed YES token.
+      if (!registry.polymarket_to_event_
+               .emplace(event.polymarket_no_token, event.id)
+               .second) {
+        set_error(error, event.line,
+                  "polymarket token '" + event.polymarket_no_token +
+                      "' mapped twice");
+        return false;
+      }
+      registry.polymarket_no_tokens_.insert(event.polymarket_no_token);
     }
     registry.event_ids_.push_back(event.id);
     event = PendingEvent{};
@@ -128,6 +144,8 @@ std::optional<TomlContractRegistry> TomlContractRegistry::parse(
       event.kalshi = std::string(value);
     } else if (key == "polymarket_token") {
       event.polymarket_token = std::string(value);
+    } else if (key == "polymarket_no_token") {
+      event.polymarket_no_token = std::string(value);
     }
     // Other keys (description, polymarket_market, ...) are documentation.
   }
@@ -143,6 +161,10 @@ std::optional<std::string_view> TomlContractRegistry::event_id(
   const auto it = map.find(market);
   if (it == map.end()) return std::nullopt;
   return std::string_view(it->second);
+}
+
+bool TomlContractRegistry::is_polymarket_no(std::string_view market) const {
+  return polymarket_no_tokens_.find(market) != polymarket_no_tokens_.end();
 }
 
 }  // namespace basis::normalize
