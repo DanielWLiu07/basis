@@ -98,9 +98,20 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-  # Phase 4+: once the replay bench exists, this job asserts the latency and
-  # throughput numbers in docs/bench/ have not regressed. Placeholder until then.
-  # perf-gate:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - run: ./scripts/check_bench.sh
+  # Asserts on every commit: the closed loop still recovers the injected
+  # lead, integrity counters stay at zero, the hot path stays within its
+  # allocation budget, and throughput stays above a floor with ~10x
+  # headroom (regression catcher, not a benchmark; measured numbers live
+  # in docs/bench/).
+  perf-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Gate
+        run: ./scripts/perf_gate.sh
