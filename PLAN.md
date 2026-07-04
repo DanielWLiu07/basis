@@ -99,15 +99,16 @@ microsecond-systems story.
 
 ## Dependency onboarding by phase
 
-The Phase-0 build intentionally pulls **only GoogleTest** so the first
-configure is fast and offline-friendly. Heavier deps come online in the phase
-that first needs them, each behind a CMake option:
+The default build pulls only GoogleTest and simdjson (the parsers are the
+heart of the offline pipeline, so JSON parsing is a core dependency).
+Heavier deps come online in the phase that first needs them, each behind a
+CMake option:
 
 | Dep            | Option                  | Phase |
 |----------------|-------------------------|-------|
 | GoogleTest     | BASIS_BUILD_TESTS (ON)  | 0     |
+| simdjson       | always on               | 0     |
 | Boost.Beast    | BASIS_ENABLE_NET (OFF)  | 1     |
-| simdjson       | BASIS_ENABLE_NET (OFF)  | 1     |
 | BDE bdlma      | BASIS_ENABLE_BDE (OFF)  | 3     |
 | HdrHistogram   | BASIS_ENABLE_BENCH (OFF)| 4     |
 
