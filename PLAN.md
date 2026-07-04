@@ -148,8 +148,12 @@ view, Tracy capture.
 
 ## The numbers (resume brackets - fill only from committed benchmarks)
 
-- `p99 [Y] us` ingest-to-signal (engine internal latency, via replay)
-- `[X]` msgs/sec sustained (max-rate replay)
+- p99 37 us ingest-to-signal, p50 0.5 us, filled 2026-07-04 from a
+  committed 30-minute live capture (docs/bench/latency.md); the tail is
+  structural (full-book snapshot messages), stable across runs
+- 840k msgs/sec sustained on that live capture (3.7M records/sec on the
+  smaller-message synthetic mix, docs/bench/allocator.md); a 300k floor
+  is CI-gated on every commit (scripts/perf_gate.sh)
 - allocator: measured parity, filled 2026-07-02 (docs/bench/allocator.md).
   The zero-copy hot path runs at 1 to 2 heap allocations per message,
   verified by a counting memory_resource and pinned by a budget test, so
@@ -178,6 +182,6 @@ view, Tracy capture.
 > Kalshi and Polymarket order books through a zero-copy hot path, proven at
 > 1-2 heap allocations per message and at parity with Bloomberg BDE arenas
 > by a counting-allocator benchmark, with a BLPAPI-style subscription
-> interface; p99 [Y] us ingest-to-signal at [X] msgs/sec, measured a
-> [N]-second cross-venue price lead, zero message loss, reproducible from a
-> CI-gated benchmark.
+> interface; p99 37 us ingest-to-signal at 840k msgs/sec on recorded live
+> sessions, measured a [N]-second cross-venue price lead, zero message
+> loss, reproducible from a CI-gated benchmark.
