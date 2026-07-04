@@ -7,9 +7,11 @@ from the headers.
 
 ## Guiding decision: offline-first
 
-The full pipeline (parse -> normalize -> unified book -> analytics -> api) is
-built and verified against *recorded* feeds first. Live WebSocket adapters
-slot in behind the same `FeedAdapter` interface later.
+The full pipeline (parse -> normalize -> unified book -> analytics -> api)
+was built and verified against *recorded* feeds first. The live WebSocket
+adapters (`feed::PolymarketFeed`, `feed::KalshiFeed`) sit behind the same
+`FeedAdapter` interface and feed the same parsers; `basis record` captures
+their raw stream into the same file format the replay path consumes.
 
 Why:
 
@@ -40,8 +42,8 @@ normalize::Normalizer      venue market id -> event id (ContractRegistry),
 model::UnifiedBook         per-event: one OrderBook per venue, basis = mid_k - mid_p
       |
       v
-analytics::DivergenceTracker   basis stats per event
-analytics::LeadLagEstimator    which venue moves first (cross-correlation)
+analytics::DivergenceTracker          basis stats per event
+analytics::CrossCorrelationEstimator  which venue moves first
       |
       v
 api::InProcessSession      BLPAPI-style push: (event, field) -> handlers
@@ -67,19 +69,30 @@ ingest-to-signal latency PLAN.md talks about.
 
 ### feed
 
-- Parsers are stateless per message except Kalshi's per-market sequence
-  tracking (needed to detect delta gaps). They take one raw WS message and
-  return `ParseResult { deltas, status, gap }`.
+- Parsers are stateless per message except Kalshi's sequence tracking,
+  which is per subscription id (sid), not per market: one subscription
+  carries interleaved markets on a single shared sequence. They take one
+  raw WS message and return `ParseResult { deltas, status, gap, sid }`.
   - status `Ok` / `Ignored` (valid but irrelevant message type, e.g.
     subscription acks) / `Malformed`.
   - `gap = true` tells the caller the venue book is untrustworthy; the parser
     already prepends a `Clear` so downstream state cannot go stale silently.
-- Kalshi book semantics: the wire gives `yes` and `no` arrays of
-  [price_cents, size]. A resting NO bid at p is a YES ask at 100 - p, so the
-  parser folds both into one YES-frame book: `yes` -> bids, `no` -> asks at
-  100 - p. This is exactly the kind of venue asymmetry the normalize layer
-  exists for, and it is documented once, here, and implemented once, in the
-  parser.
+    The live Kalshi feed answers a gap by unsubscribing that sid and
+    subscribing again, which forces a fresh snapshot.
+  - The result is arena-friendly: `deltas` is a pmr vector backed by the
+    memory_resource handed to `parse()`, and `BookDelta::market` is a view
+    into the simdjson buffer (valid until the next parse on the same
+    parser), so the hot path copies no strings. Anything that outlives the
+    message, like the Kalshi snapshot ledger, copies what it keeps.
+- Both venues express the NO side of a binary market as a mirror of the
+  YES side (a NO bid at p is a YES ask at 100 - p), but on different
+  layers, so the fold lives in two places on purpose:
+  - Kalshi sends `yes` and `no` arrays inside one message, so the parser
+    folds them into one YES-frame book (`yes` -> bids, `no` -> asks at
+    100 - p).
+  - Polymarket sends the NO-outcome token's book as separate messages, and
+    only the registry knows which tokens are NO tokens, so the normalizer
+    does that fold when routing the delta.
 - Polymarket prices arrive as decimal probability strings ("0.47"); the
   parser converts to integer cents. Sizes are absolute (`Set`), and "0"
   removes a level. `price_change` carries BUY/SELL which map to Bid/Ask.
@@ -93,14 +106,19 @@ ingest-to-signal latency PLAN.md talks about.
   malformed lines fail loudly with the line number.
 - `Normalizer` owns the map event_id -> UnifiedBook. On each delta it looks
   up the event (unmapped markets are counted and skipped, never guessed),
-  applies the delta, and notifies an observer callback with the updated
-  event. Analytics and the API layer subscribe there; parsers never see
-  events, analytics never see venue ids.
+  folds Polymarket NO-token deltas into the YES frame, applies the delta,
+  and notifies an observer callback with the updated event. Analytics and
+  the API layer subscribe there; parsers never see events, analytics never
+  see venue ids.
+- The per-delta lookup allocates nothing: registry maps use a transparent
+  hash so a string_view probes them directly, and `event_id()` returns a
+  view over registry-owned storage. The book maps draw their nodes from an
+  injectable memory_resource (see bench).
 
 ### analytics
 
 - `DivergenceTracker`: running count / mean / min / max of basis per event.
-- `LeadLagEstimator` (cross-correlation implementation):
+- `CrossCorrelationEstimator`:
   1. `observe(kalshi_mid, poly_mid, ts_ns)` appends a sample whenever both
      mids exist.
   2. `estimate()` resamples both series onto a fixed grid (default 100 ms)
@@ -118,8 +136,9 @@ ingest-to-signal latency PLAN.md talks about.
 
 - `InProcessSession`: mutex-guarded subscription table, synchronous publish
   on the caller's thread. Fields published per event update: `kalshi_mid`,
-  `poly_mid`, `basis`. Good enough for the offline engine; a queued async
-  session arrives with the live feeds.
+  `poly_mid`, `basis`. Good enough for replay-driven consumers; a queued
+  async session is future work if a consumer ever needs to get off the
+  publishing thread.
 
 ### bench
 
@@ -131,6 +150,33 @@ ingest-to-signal latency PLAN.md talks about.
   collects per-message latency and message/gap/unmapped counters, and prints
   a report. Replay is max-rate (as fast as the engine drains), which is what
   the latency measurement wants.
+- The harness exposes the two allocation seams the hot path has: a
+  `ParseArena` (per-message transients, released after each message) and a
+  book memory_resource (long-lived node churn). `replay --alloc` selects
+  the global heap, a counting wrapper that reports heap traffic per
+  message, or Bloomberg bdlma arenas; docs/bench/allocator.md records what
+  those measured and why the heap default shipped.
+
+### net (BASIS_ENABLE_NET)
+
+- `WsClient`: one TLS WebSocket on its own IO thread. Reconnect with
+  exponential backoff plus jitter; subscriptions are re-sent by the
+  connect handler after every reconnect, and upgrade headers can be minted
+  per connection (Kalshi's auth signature embeds a timestamp, so a stale
+  header set would be rejected on reconnect).
+- `KalshiSigner`: RSA-PSS / SHA-256 over timestamp + method + path, key
+  loaded from a gitignored PEM. The single TU that touches OpenSSL's EVP
+  API for signing; verified offline by tests against the public key half.
+- The feed adapters own the venue protocol on top: subscribe message
+  shape, gap recovery, malformed/delta counters, and a raw tap that
+  `basis record` uses to write the feedlog.
+
+### alloc (BASIS_ENABLE_BDE)
+
+- Wrappers exposing Bloomberg bdlma allocators as std::pmr resources.
+  One TU compiled as C++17 to match Homebrew's BDE archives (bsls coerces
+  the dialect at link time); the rest of the engine sees only
+  `std::pmr::memory_resource`, whose ABI does not vary by dialect.
 
 ## Capture format (.feedlog)
 
@@ -163,9 +209,11 @@ claims; those wait for recorded live sessions (docs/bench rule).
 
 The replay path is single-threaded on purpose: deterministic, and the
 latency being measured is per-message compute, not queueing. The live path
-(Phase 1/2) adds one IO thread per venue socket feeding a bounded queue
-drained by the analytics thread; that boundary is the only planned crossing
-and it lands with the code that needs it, not speculatively.
+runs one IO thread per venue socket (`WsClient`); parsing and the delta
+sink run on that thread, and `basis record` serializes the two venues'
+raw taps into one feedlog under a mutex. Live analytics (a bounded queue
+between the IO threads and one analytics thread) stays future work; today
+the analytics story is capture live, replay deterministically.
 
 ## Error policy
 
