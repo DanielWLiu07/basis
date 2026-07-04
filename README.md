@@ -14,6 +14,14 @@ capital efficiency, and settlement rails, so their prices diverge and one tends
 to move first. `basis` measures that lead in real time, over an engine built
 for low internal latency and zero message loss.
 
+![Normalized Polymarket mid prices from a 30 minute live capture](docs/img/live-mids.png)
+
+The engine's normalized view of real markets: 2026 World Cup winner books
+from the committed 30 minute live capture (`docs/bench/latency.md`), venue
+probability strings turned into one canonical cents-per-contract frame.
+Figures regenerate from the committed capture with
+`scripts/plot_bench.py`.
+
 ## Status
 
 The offline engine runs end to end: real venue wire formats are parsed,
@@ -46,8 +54,15 @@ and watch the engine report that lead back.
 
 The replay prints message accounting (nothing is ever silently dropped),
 per-event basis statistics, the recovered lead, and ingest-to-signal latency
-percentiles. The same closed loop runs in the test suite: if the engine
-cannot recover an injected lead through the real parsers, the build is red.
+percentiles. The same closed loop runs in the test suite and in CI's
+performance gate: if the engine cannot recover an injected lead through the
+real parsers, the build is red.
+
+![Synthetic session with the injected 400 ms cross-venue lead visible](docs/img/synth-lead.png)
+
+That injected lead is visible to the eye in the synthetic session itself:
+the same random walk quoted by both synthetic venues, one of them 400 ms
+behind. Replay reports 0.400 s with correlation 1.00.
 
 The configure pulls GoogleTest and simdjson. With `-DBASIS_ENABLE_BDE=ON`
 (`brew install bde` on macOS), `replay --alloc bde` runs the hot path on
@@ -112,17 +127,19 @@ only market data here comes from Kalshi's and Polymarket's public APIs.
 ## Layout
 
 ```
-src/core/       logging, clocks, version
+src/core/       logging, clocks, hashing, counting allocator, portable rng
 src/model/      canonical schema: venue, side, order book, unified book
-src/feed/       venue parsers (Kalshi, Polymarket) + feedlog capture format
-src/normalize/  cross-venue contract registry + event router
+src/feed/       venue parsers, live feed adapters, feedlog capture format
+src/normalize/  cross-venue contract registry + event router (NO-side fold)
 src/analytics/  divergence and cross-correlation lead-lag
 src/api/        BLPAPI-style subscription interface
 src/bench/      replay harness, latency recorder, synthetic sessions
-src/net/        WebSocket client (next phase, live feeds)
+src/net/        TLS WebSocket client + Kalshi request signing
+src/alloc/      Bloomberg bdlma arenas behind a std::pmr seam
 tests/          GoogleTest unit and integration tests
 configs/        contract registries (real + synthetic)
 docs/           design notes, venue API notes, benchmark artifacts
+scripts/        CI performance gate, README figure generator
 ```
 
 ## Numbers
