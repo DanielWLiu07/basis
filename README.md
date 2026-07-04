@@ -130,9 +130,16 @@ docs/           design notes, venue API notes, benchmark artifacts
 Filled in only from committed benchmarks, never aspirational (the same rule the
 companion voxel-engine project follows). Recorded so far:
 
+- `docs/bench/latency.md`: on a committed 30-minute live capture (34,731
+  messages, 266,597 deltas, zero loss), ingest-to-signal latency is
+  p50 0.5 us / p99 37 us at ~840k records/sec, stable across runs.
 - `docs/bench/allocator.md`: hot path at 1-2 heap allocations per message,
-  3.7M records/sec max-rate replay on an Apple M4, bdlma arenas at parity
-  with the global heap.
+  3.7M records/sec max-rate synthetic replay on an Apple M4, bdlma arenas
+  at parity with the global heap.
+- `scripts/perf_gate.sh` runs in CI on every commit: lead recovery exact,
+  integrity counters zero, allocation budget held, throughput floor with
+  10x headroom.
 
-The remaining headline figures in `PLAN.md` stay bracketed placeholders
-until their phases land.
+The cross-venue lead measurement waits on a simultaneous both-venue
+recording (Kalshi credentials); until then that figure stays a bracketed
+placeholder in `PLAN.md`.
