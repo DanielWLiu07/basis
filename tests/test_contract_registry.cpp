@@ -36,6 +36,38 @@ polymarket_token = "9944001"
   EXPECT_EQ(reg->polymarket_tokens()[1], "9944001");
 }
 
+TEST(TomlContractRegistry, NoTokenMapsToTheEventButIsNotASubscribeKey) {
+  const auto reg = TomlContractRegistry::parse(R"(
+[[event]]
+id = "fed-cut-2026-09"
+kalshi = "FED-26SEP-CUT"
+polymarket_token = "7132107"
+polymarket_no_token = "9004411"
+)");
+  ASSERT_TRUE(reg.has_value());
+  EXPECT_EQ(*reg->event_id(Venue::Polymarket, "9004411"), "fed-cut-2026-09");
+  EXPECT_TRUE(reg->is_polymarket_no("9004411"));
+  EXPECT_FALSE(reg->is_polymarket_no("7132107"));
+  // Only the YES token is subscribed; the venue pushes the NO book anyway.
+  ASSERT_EQ(reg->polymarket_tokens().size(), 1u);
+  EXPECT_EQ(reg->polymarket_tokens()[0], "7132107");
+}
+
+TEST(TomlContractRegistry, NoTokenSharesTheDuplicateCheck) {
+  std::string error;
+  const auto reg = TomlContractRegistry::parse(R"(
+[[event]]
+id = "a"
+polymarket_token = "7132107"
+
+[[event]]
+id = "b"
+polymarket_no_token = "7132107"
+)", &error);
+  EXPECT_FALSE(reg.has_value());
+  EXPECT_NE(error.find("mapped twice"), std::string::npos);
+}
+
 TEST(TomlContractRegistry, EventWithoutIdFailsWithLineNumber) {
   std::string error;
   const auto reg = TomlContractRegistry::parse(R"(

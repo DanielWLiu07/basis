@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace basis::core {
 
@@ -22,5 +23,8 @@ struct StringHash {
 template <typename Value>
 using StringMap =
     std::unordered_map<std::string, Value, StringHash, std::equal_to<>>;
+
+using StringSet =
+    std::unordered_set<std::string, StringHash, std::equal_to<>>;
 
 }  // namespace basis::core

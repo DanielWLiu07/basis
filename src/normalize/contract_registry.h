@@ -23,14 +23,24 @@ class ContractRegistry {
   // of allocation.
   virtual std::optional<std::string_view> event_id(
       model::Venue venue, std::string_view market) const = 0;
+
+  // True when `market` is a mapped Polymarket NO-outcome token. Its book
+  // mirrors the YES book (a NO bid at p is a YES ask at 100 - p), so the
+  // normalizer folds its deltas into the YES frame instead of keeping a
+  // second book per event.
+  virtual bool is_polymarket_no(std::string_view market) const {
+    (void)market;
+    return false;
+  }
 };
 
 // Registry backed by the contracts.toml subset:
 //
 //   [[event]]
 //   id = "fed-cut-2026-09"
-//   kalshi = "FED-26SEP-CUT"           (Kalshi market_ticker)
-//   polymarket_token = "7132107..."    (YES-outcome asset id)
+//   kalshi = "FED-26SEP-CUT"              (Kalshi market_ticker)
+//   polymarket_token = "7132107..."       (YES-outcome asset id)
+//   polymarket_no_token = "9004411..."    (NO-outcome asset id, folded)
 //
 // Only [[event]] tables of key = "quoted string" pairs and full-line #
 // comments are understood, which is all the registry file uses; a TOML
@@ -45,6 +55,8 @@ class TomlContractRegistry final : public ContractRegistry {
 
   std::optional<std::string_view> event_id(
       model::Venue venue, std::string_view market) const override;
+
+  bool is_polymarket_no(std::string_view market) const override;
 
   const std::vector<std::string>& event_ids() const { return event_ids_; }
 
@@ -61,6 +73,7 @@ class TomlContractRegistry final : public ContractRegistry {
 
   core::StringMap<std::string> kalshi_to_event_;
   core::StringMap<std::string> polymarket_to_event_;
+  core::StringSet polymarket_no_tokens_;
   std::vector<std::string> event_ids_;
   std::vector<std::string> kalshi_tickers_;
   std::vector<std::string> polymarket_tokens_;
