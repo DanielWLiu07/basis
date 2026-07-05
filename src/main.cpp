@@ -21,14 +21,19 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
 
+#include "analytics/divergence.h"
+#include "analytics/lead_lag.h"
+#include "core/bounded_queue.h"
 #include "feed/feed_log.h"
 #include "feed/kalshi_feed.h"
 #include "feed/polymarket_feed.h"
 #include "net/kalshi_auth.h"
+#include "normalize/normalizer.h"
 #endif
 
 namespace {
@@ -59,6 +64,13 @@ int usage() {
       "      Polymarket needs no credentials. Kalshi joins the capture when\n"
       "      --kalshi-key-id is given (RSA key from --kalshi-pem, default\n"
       "      secrets/kalshi.pem, never committed)\n"
+      "\n"
+      "  basis live [--config <contracts.toml>] [--seconds N] [--report N]\n"
+      "             [--kalshi-key-id ID] [--kalshi-pem <key.pem>]\n"
+      "      stream the configured contracts and print per-event basis in\n"
+      "      real time: IO threads feed a bounded queue drained by one\n"
+      "      analytics thread; a final report gives lead-lag and queue\n"
+      "      accounting (same credential rules as record)\n"
 #endif
       ,
       basis::kVersion);
@@ -419,6 +431,200 @@ int run_record(const std::vector<std::string_view>& args) {
   return 0;
 }
 
+// The live pipeline's analytics half: everything downstream of the queue,
+// owned by one analytics thread, with a mutex only for the periodic
+// console snapshot taken by the main thread.
+class LiveAnalytics {
+ public:
+  explicit LiveAnalytics(const basis::normalize::ContractRegistry& registry)
+      : normalizer_(registry) {
+    normalizer_.set_observer([this](const std::string& event_id,
+                                    const basis::model::UnifiedBook& book,
+                                    const basis::model::BookDelta& delta) {
+      const auto kalshi_mid = book.mid(basis::model::Venue::Kalshi);
+      const auto poly_mid = book.mid(basis::model::Venue::Polymarket);
+      auto& ev = events_[event_id];
+      ev.kalshi_mid = kalshi_mid;
+      ev.poly_mid = poly_mid;
+      if (kalshi_mid && poly_mid) {
+        ev.divergence.observe(*kalshi_mid - *poly_mid);
+        ev.lead_lag.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
+      }
+    });
+  }
+
+  void on_delta(const basis::model::OwnedBookDelta& owned) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    ++deltas_;
+    normalizer_.on_delta(owned.view());
+  }
+
+  void print_snapshot() {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::printf("-- %llu deltas, %llu unmapped\n",
+                static_cast<unsigned long long>(deltas_),
+                static_cast<unsigned long long>(
+                    normalizer_.unmapped_deltas()));
+    for (const auto& [event_id, ev] : events_) {
+      if (ev.kalshi_mid && ev.poly_mid) {
+        std::printf("   %-28s kalshi %5.1fc  poly %5.1fc  basis %+5.1fc\n",
+                    event_id.c_str(), *ev.kalshi_mid, *ev.poly_mid,
+                    *ev.kalshi_mid - *ev.poly_mid);
+      } else if (ev.poly_mid) {
+        std::printf("   %-28s poly %5.1fc  (no kalshi book yet)\n",
+                    event_id.c_str(), *ev.poly_mid);
+      } else if (ev.kalshi_mid) {
+        std::printf("   %-28s kalshi %5.1fc  (no polymarket book yet)\n",
+                    event_id.c_str(), *ev.kalshi_mid);
+      }
+    }
+  }
+
+  void print_final_report() {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [event_id, ev] : events_) {
+      std::printf("\nevent %s\n", event_id.c_str());
+      if (ev.divergence.samples() == 0) {
+        std::printf("  basis    no overlap (one venue never had a "
+                    "two-sided book)\n");
+        continue;
+      }
+      std::printf("  basis    mean %+.2fc  min %+.2fc  max %+.2fc  "
+                  "last %+.2fc  (%llu samples)\n",
+                  ev.divergence.mean(), ev.divergence.min(),
+                  ev.divergence.max(), ev.divergence.last(),
+                  static_cast<unsigned long long>(ev.divergence.samples()));
+      const auto ll = ev.lead_lag.estimate();
+      if (ll.correlation > 0.0) {
+        const char* leader = ll.lead_seconds >= 0 ? "kalshi" : "polymarket";
+        std::printf("  lead-lag %s leads by %.3fs  (corr %.2f over %llu "
+                    "samples)\n",
+                    leader,
+                    ll.lead_seconds >= 0 ? ll.lead_seconds : -ll.lead_seconds,
+                    ll.correlation,
+                    static_cast<unsigned long long>(ll.samples));
+      }
+    }
+  }
+
+ private:
+  struct EventState {
+    std::optional<double> kalshi_mid;
+    std::optional<double> poly_mid;
+    basis::analytics::DivergenceTracker divergence;
+    basis::analytics::CrossCorrelationEstimator lead_lag;
+  };
+
+  std::mutex mutex_;
+  basis::normalize::Normalizer normalizer_;
+  std::map<std::string, EventState> events_;
+  std::uint64_t deltas_ = 0;
+};
+
+int run_live(const std::vector<std::string_view>& args) {
+  const auto config_path =
+      flag_string(args, "--config", "configs/contracts.toml");
+  const auto seconds = flag_value(args, "--seconds", 0);  // 0: until ctrl-c
+  const auto report_every = flag_value(args, "--report", 5);
+  if (!seconds || *seconds < 0 || !report_every || *report_every < 1) {
+    basis::log::error("live: bad --seconds or --report value");
+    return usage();
+  }
+  const auto kalshi_key_id = flag_string(args, "--kalshi-key-id", "");
+  const auto kalshi_pem =
+      flag_string(args, "--kalshi-pem", "secrets/kalshi.pem");
+
+  std::string error;
+  const auto registry =
+      basis::normalize::TomlContractRegistry::load(config_path, &error);
+  if (!registry) {
+    basis::log::error(error);
+    return 1;
+  }
+
+  // The one thread crossing in the engine: feed IO threads produce owned
+  // deltas (a queued view into the parser buffer would dangle), one
+  // analytics thread consumes. Bounded and blocking, so bursts back up
+  // into TCP instead of dropping; the final report proves the accounting.
+  basis::core::BoundedQueue<basis::model::OwnedBookDelta> queue(8192);
+  const auto sink = [&queue](const basis::model::BookDelta& delta) {
+    queue.push(basis::model::OwnedBookDelta(delta));
+  };
+
+  basis::feed::PolymarketFeed poly_feed(
+      {.token_ids = registry->polymarket_tokens()});
+  poly_feed.set_sink(sink);
+
+  std::unique_ptr<basis::feed::KalshiFeed> kalshi_feed;
+  if (!kalshi_key_id.empty()) {
+    auto signer = basis::net::KalshiSigner::load(kalshi_pem, &error);
+    if (!signer) {
+      basis::log::error(error);
+      return 1;
+    }
+    kalshi_feed = std::make_unique<basis::feed::KalshiFeed>(
+        basis::feed::KalshiFeed::Config{
+            .market_tickers = registry->kalshi_tickers(),
+            .key_id = kalshi_key_id,
+            .signer = std::move(*signer)});
+    kalshi_feed->set_sink(sink);
+  } else {
+    std::printf("no kalshi credentials: streaming polymarket only\n");
+  }
+
+  LiveAnalytics analytics(*registry);
+  std::thread analytics_thread([&] {
+    while (auto owned = queue.pop()) {
+      analytics.on_delta(*owned);
+    }
+  });
+
+  std::signal(SIGINT, handle_sigint);
+  poly_feed.start();
+  if (kalshi_feed) kalshi_feed->start();
+
+  const auto started = std::chrono::steady_clock::now();
+  auto next_report = started + std::chrono::seconds(*report_every);
+  while (!g_interrupted.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const auto now = std::chrono::steady_clock::now();
+    if (*seconds > 0 && now - started >= std::chrono::seconds(*seconds)) {
+      break;
+    }
+    if (now >= next_report) {
+      next_report += std::chrono::seconds(*report_every);
+      analytics.print_snapshot();
+    }
+  }
+
+  poly_feed.stop();
+  if (kalshi_feed) kalshi_feed->stop();
+  queue.close();  // analytics drains what is queued, then exits
+  analytics_thread.join();
+
+  analytics.print_final_report();
+  std::printf("\nqueue     %llu in, %llu out, high water %zu, "
+              "%llu blocked pushes\n",
+              static_cast<unsigned long long>(queue.pushed()),
+              static_cast<unsigned long long>(queue.popped()),
+              queue.high_water(),
+              static_cast<unsigned long long>(queue.blocked_pushes()));
+  std::printf("feeds     poly %llu msgs %llu malformed %llu reconnects",
+              static_cast<unsigned long long>(poly_feed.messages()),
+              static_cast<unsigned long long>(poly_feed.malformed()),
+              static_cast<unsigned long long>(poly_feed.reconnects()));
+  if (kalshi_feed) {
+    std::printf("  |  kalshi %llu msgs %llu malformed %llu gaps "
+                "%llu reconnects",
+                static_cast<unsigned long long>(kalshi_feed->messages()),
+                static_cast<unsigned long long>(kalshi_feed->malformed()),
+                static_cast<unsigned long long>(kalshi_feed->gaps()),
+                static_cast<unsigned long long>(kalshi_feed->reconnects()));
+  }
+  std::printf("\n");
+  return 0;
+}
+
 #endif  // BASIS_HAS_NET
 
 }  // namespace
@@ -433,6 +639,7 @@ int main(int argc, char** argv) {
   if (command == "replay") return run_replay(rest);
 #ifdef BASIS_HAS_NET
   if (command == "record") return run_record(rest);
+  if (command == "live") return run_live(rest);
 #endif
   return usage();
 }
