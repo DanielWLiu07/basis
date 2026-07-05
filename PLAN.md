@@ -161,7 +161,13 @@ view, Tracy capture.
   bdlma arenas neither gain nor cost throughput at 3.7M records/sec replay.
   Heap stays the default; the measurement is the deliverable.
 - `[N]`-second cross-venue lead (with sample size)
-- zero message loss across `[K]` reconnect/gap events
+- zero message loss across 4 forced disconnects, filled 2026-07-05 and
+  CI-gated on every commit (tests/test_reconnect.cpp): a fault-injecting
+  local server hard-drops the TCP socket mid-subscription and the real
+  feed stack must rebuild the book to ground truth with every drop
+  counted (4 reconnects, 5 snapshots, 0 malformed), TLS peer and hostname
+  verification on throughout. Live queue accounting (basis live) extends
+  the same rule across the IO-to-analytics thread boundary.
 
 ## Risks & mitigations
 

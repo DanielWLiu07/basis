@@ -166,6 +166,10 @@ companion voxel-engine project follows). Recorded so far:
 - `scripts/perf_gate.sh` runs in CI on every commit: lead recovery exact,
   integrity counters zero, allocation budget held, throughput floor with
   10x headroom.
+- `tests/test_reconnect.cpp` runs in CI on every commit: 4 forced
+  mid-subscription TCP drops against a fault-injecting local server, and
+  the feed stack must rebuild the book to ground truth with every drop
+  counted, TLS peer and hostname verification on throughout.
 
 The cross-venue lead measurement waits on a simultaneous both-venue
 recording (Kalshi credentials); until then that figure stays a bracketed
