@@ -20,7 +20,13 @@ class PolymarketFeed final : public FeedAdapter {
   struct Config {
     std::vector<std::string> token_ids;  // outcome tokens (asset ids)
     std::string host = "ws-subscriptions-clob.polymarket.com";
+    std::string port = "443";
     std::string target = "/ws/market";
+    // Passed through to the WebSocket client; the defaults are for the
+    // real venue, the overrides are how the fault-injection test points
+    // the same feed stack at a local server.
+    std::string trusted_ca_pem;
+    std::int64_t initial_backoff_ms = 500;
   };
 
   // Raw tap for the record tool: every wire message verbatim, before

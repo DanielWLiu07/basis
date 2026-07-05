@@ -20,6 +20,11 @@ struct WsConfig {
   // minted per connection (timestamped signatures) go through
   // set_header_provider instead.
   std::vector<std::pair<std::string, std::string>> headers;
+  // Extra trust anchor in PEM form, for endpoints whose certificate the
+  // system store does not know (the fault-injection test server). The
+  // system trust store stays active either way, and peer plus hostname
+  // verification are always on; there is deliberately no insecure mode.
+  std::string trusted_ca_pem;
   std::int64_t initial_backoff_ms = 500;
   std::int64_t max_backoff_ms = 30'000;
 };
