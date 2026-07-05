@@ -7,6 +7,7 @@
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/ssl/host_name_verification.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/beast/websocket/ssl.hpp>
@@ -92,7 +93,16 @@ void WsClient::run() {
     boost::system::error_code ec;
 
     conn->tls.set_default_verify_paths(ec);
+    if (!config_.trusted_ca_pem.empty()) {
+      conn->tls.add_certificate_authority(
+          asio::buffer(config_.trusted_ca_pem), ec);
+    }
     conn->tls.set_verify_mode(ssl::verify_peer);
+    // Peer verification alone accepts any valid certificate for any
+    // host; pinning the expected hostname is what stops a redirected
+    // connection from presenting someone else's perfectly valid cert.
+    conn->tls.set_verify_callback(ssl::host_name_verification(config_.host),
+                                  ec);
 
     // Resolve + TCP connect.
     tcp::resolver resolver(conn->ioc);

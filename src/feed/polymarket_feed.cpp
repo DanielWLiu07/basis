@@ -6,7 +6,12 @@ namespace basis::feed {
 
 PolymarketFeed::PolymarketFeed(Config config)
     : config_(std::move(config)),
-      client_(net::WsConfig{.host = config_.host, .target = config_.target}) {
+      client_(net::WsConfig{
+          .host = config_.host,
+          .port = config_.port,
+          .target = config_.target,
+          .trusted_ca_pem = config_.trusted_ca_pem,
+          .initial_backoff_ms = config_.initial_backoff_ms}) {
   client_.set_on_connect([this](net::WsClient& client) {
     client.send(subscribe_message());
   });
