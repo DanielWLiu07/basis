@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 #include "model/types.h"
@@ -35,6 +36,45 @@ struct BookDelta {
   std::int64_t     size        = 0; // meaning depends on action
   std::uint64_t    seq         = 0; // venue sequence number (gap detection)
   std::int64_t     ts_ns       = 0; // ingest timestamp, ns since epoch
+};
+
+// An owning copy of a BookDelta, for consumers that outlive the parse
+// buffer: the live path queues deltas from the IO threads to the
+// analytics thread, and a queued view would dangle by the time it is
+// popped. Fields are stored flat (no internal aliasing), so moves and
+// copies are safe by construction; view() re-materializes a BookDelta
+// whose market aliases this object, valid for this object's lifetime.
+struct OwnedBookDelta {
+  OwnedBookDelta() = default;
+  explicit OwnedBookDelta(const BookDelta& d)
+      : market(d.market),
+        venue(d.venue),
+        action(d.action),
+        side(d.side),
+        price_cents(d.price_cents),
+        size(d.size),
+        seq(d.seq),
+        ts_ns(d.ts_ns) {}
+
+  BookDelta view() const {
+    return BookDelta{.venue = venue,
+                     .market = market,
+                     .action = action,
+                     .side = side,
+                     .price_cents = price_cents,
+                     .size = size,
+                     .seq = seq,
+                     .ts_ns = ts_ns};
+  }
+
+  std::string   market;
+  Venue         venue       = Venue::Kalshi;
+  Action        action      = Action::Set;
+  Side          side        = Side::Bid;
+  int           price_cents = 0;
+  std::int64_t  size        = 0;
+  std::uint64_t seq         = 0;
+  std::int64_t  ts_ns       = 0;
 };
 
 constexpr const char* to_string(Action a) {
