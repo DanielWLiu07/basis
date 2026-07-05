@@ -99,6 +99,16 @@ The key file lives under gitignored `secrets/` and never enters the repo.
 Until both venues stream, replay reports each event's one-sided book and
 flags the missing overlap rather than inventing a basis.
 
+`basis live` runs the analytics in real time instead of capturing: feed
+IO threads hand owned deltas to a bounded queue drained by one analytics
+thread, and per-event basis prints as the books move. The exit report
+includes the queue accounting (in, out, high water, blocked pushes), so
+zero message loss across the thread boundary is measured, not assumed:
+
+```
+./build-net/src/basis live --seconds 60
+```
+
 ## Design at a glance
 
 ```
