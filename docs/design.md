@@ -210,10 +210,16 @@ claims; those wait for recorded live sessions (docs/bench rule).
 The replay path is single-threaded on purpose: deterministic, and the
 latency being measured is per-message compute, not queueing. The live path
 runs one IO thread per venue socket (`WsClient`); parsing and the delta
-sink run on that thread, and `basis record` serializes the two venues'
-raw taps into one feedlog under a mutex. Live analytics (a bounded queue
-between the IO threads and one analytics thread) stays future work; today
-the analytics story is capture live, replay deterministically.
+sink run on that thread. `basis record` serializes the two venues' raw
+taps into one feedlog under a mutex. `basis live` runs analytics in real
+time: the IO threads push owning copies of each delta (`OwnedBookDelta`;
+a queued view into the parser buffer would dangle) into one
+`core::BoundedQueue` drained by a single analytics thread that owns the
+normalizer and per-event trackers. The queue blocks when full rather than
+dropping, bursts back up into TCP, and its counters (in, out, high water,
+blocked pushes) are printed at exit so zero loss across the boundary is a
+number, not a hope. Quotable latency numbers still come from replay,
+where the network is stripped away.
 
 ## Error policy
 
