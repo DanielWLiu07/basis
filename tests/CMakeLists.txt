@@ -23,7 +23,13 @@ if(BASIS_ENABLE_BDE)
   target_link_libraries(basis_tests PRIVATE basis_alloc_bde)
 endif()
 if(BASIS_ENABLE_NET)
-  target_sources(basis_tests PRIVATE test_kalshi_auth.cpp)
+  target_sources(basis_tests PRIVATE
+    test_kalshi_auth.cpp
+    test_reconnect.cpp
+    support/test_tls.cpp
+    support/flaky_ws_server.cpp
+  )
+  target_include_directories(basis_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(basis_tests PRIVATE basis_feed_live)
 endif()
 # Lets tests load checked-in configs relative to the repo, not the build dir.
