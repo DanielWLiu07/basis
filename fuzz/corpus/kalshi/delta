@@ -1,0 +1,1 @@
+{"type":"orderbook_delta","sid":1,"seq":11,"msg":{"market_ticker":"KXFEDDECISION-26JUL-C25","price":45,"delta":-10,"side":"no"}}
