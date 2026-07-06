@@ -98,6 +98,27 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # Short-budget fuzz of every untrusted-input surface on every commit;
+  # long runs happen locally. Any crash artifact fails the job.
+  fuzz:
+    name: fuzz (short budget)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Configure
+        run: >
+          CC=clang CXX=clang++ cmake -B build-fuzz -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBASIS_ENABLE_FUZZ=ON
+      - name: Build
+        run: cmake --build build-fuzz -j
+      - name: Fuzz
+        run: |
+          ./build-fuzz/fuzz/fuzz_kalshi_parser -runs=100000 -max_len=4096 fuzz/corpus/kalshi
+          ./build-fuzz/fuzz/fuzz_polymarket_parser -runs=100000 -max_len=4096 fuzz/corpus/polymarket
+          ./build-fuzz/fuzz/fuzz_contract_registry -runs=100000 -max_len=4096 fuzz/corpus/registry
+
   # Asserts on every commit: the closed loop still recovers the injected
   # lead, integrity counters stay at zero, the hot path stays within its
   # allocation budget, and throughput stays above a floor with ~10x
