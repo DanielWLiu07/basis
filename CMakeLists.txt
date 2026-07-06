@@ -19,6 +19,7 @@ option(BASIS_ENABLE_BDE       "Enable Bloomberg BDE bdlma allocators"        OFF
 option(BASIS_ENABLE_BENCH     "Build the replay benchmark (HdrHistogram)"    OFF)
 option(BASIS_SANITIZE         "Build with ASan + UBSan"                      OFF)
 option(BASIS_SANITIZE_THREAD  "Build with ThreadSanitizer"                   OFF)
+option(BASIS_ENABLE_FUZZ      "Build libFuzzer targets (clang only)"         OFF)
 
 include(cmake/warnings.cmake)
 include(cmake/sanitizers.cmake)
@@ -29,4 +30,8 @@ add_subdirectory(src)
 if(BASIS_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(BASIS_ENABLE_FUZZ)
+  add_subdirectory(fuzz)
 endif()
