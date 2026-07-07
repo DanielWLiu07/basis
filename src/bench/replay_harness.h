@@ -31,6 +31,13 @@ struct ReplayStats {
   std::uint64_t gaps = 0;
   std::uint64_t unmapped_deltas = 0;
 
+  // Venue integrity hashes (Polymarket book snapshots): verified against
+  // a locally recomputed SHA-1, mismatched, or carrying too few fields to
+  // recompute (the venue's periodic refresh form).
+  std::uint64_t hashes_verified = 0;
+  std::uint64_t hashes_mismatched = 0;
+  std::uint64_t hashes_unverifiable = 0;
+
   LatencyRecorder::Report latency;  // per-record ingest-to-signal
   std::int64_t pipeline_ns = 0;     // sum of measured spans, excludes file io
 

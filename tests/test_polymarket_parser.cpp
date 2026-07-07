@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <sstream>
+#include <string>
+
 #include "feed/polymarket_parser.h"
 #include "model/order_book.h"
 
@@ -155,4 +159,58 @@ TEST(PolymarketParser, IgnoresUnknownEventsAndFlagsMalformed) {
   })", 0);
   EXPECT_EQ(r.status, ParseStatus::Malformed);
   EXPECT_TRUE(r.deltas.empty());
+}
+
+namespace {
+
+std::string load_fixture(const char* name) {
+  std::ifstream in(std::string(BASIS_SOURCE_DIR "/tests/data/") + name);
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
+}
+
+}  // namespace
+
+// The fixture is a real captured wire message with the hash the venue
+// actually sent; the parser must recompute and match it. Tampering with
+// one size must flip the verdict: a corrupted book cannot verify.
+TEST(PolymarketParser, VerifiesARealSnapshotHash) {
+  PolymarketParser p;
+  const auto raw = load_fixture("polymarket_book_snapshot.json");
+  ASSERT_FALSE(raw.empty());
+
+  const auto r = p.parse(raw, 0);
+  EXPECT_EQ(r.status, ParseStatus::Ok);
+  EXPECT_EQ(r.hashes_verified, 1u);
+  EXPECT_EQ(r.hashes_mismatched, 0u);
+
+  auto tampered = raw;
+  const auto pos = tampered.find("2341150.69");
+  ASSERT_NE(pos, std::string::npos);
+  tampered.replace(pos, 10, "2341150.70");
+  EXPECT_EQ(p.parse(tampered, 0).hashes_mismatched, 1u);
+}
+
+TEST(PolymarketParser, RefreshFormSnapshotsAreUnverifiable) {
+  // The venue's periodic book refreshes omit tick_size and
+  // last_trade_price, which its hash covers; those are counted, not
+  // guessed at.
+  PolymarketParser p;
+  const auto r = p.parse(R"({
+    "event_type": "book", "asset_id": "t", "market": "0xabc",
+    "timestamp": "1", "hash": "0000000000000000000000000000000000000000",
+    "bids": [{"price": "0.45", "size": "10"}], "asks": []
+  })", 0);
+  EXPECT_EQ(r.status, ParseStatus::Ok);
+  EXPECT_EQ(r.hashes_unverifiable, 1u);
+
+  // No hash at all: nothing to check, so nothing is claimed.
+  const auto r2 = p.parse(R"({
+    "event_type": "book", "asset_id": "t",
+    "bids": [{"price": "0.45", "size": "10"}], "asks": []
+  })", 0);
+  EXPECT_EQ(r2.hashes_verified + r2.hashes_mismatched +
+                r2.hashes_unverifiable,
+            0u);
 }

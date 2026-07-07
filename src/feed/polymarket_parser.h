@@ -22,9 +22,15 @@ namespace basis::feed {
 // The top-level payload may be a single event or an array of events.
 // Prices are decimal probability strings ("0.47") converted to canonical
 // integer cents. Deltas are keyed by asset_id, the token the contract
-// registry maps. Stream integrity is a book hash rather than a sequence
-// number; verifying it needs the venue's book-hash algorithm and is wired
-// with the live feed, not here.
+// registry maps.
+//
+// Stream integrity is a book hash rather than a sequence number. The
+// parser recomputes it (SHA-1 over the venue's canonical summary, see
+// verify_book_hash in the .cpp) for every snapshot that carries the
+// fields the hash covers, and reports per-book verified, mismatched, and
+// unverifiable counts on the result. The venue's periodic refresh form
+// omits hashed fields and is counted as unverifiable rather than guessed
+// at.
 class PolymarketParser {
  public:
   // `mr` backs the result's deltas vector; see ParseResult for lifetime.

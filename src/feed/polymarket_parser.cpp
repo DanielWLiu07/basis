@@ -1,6 +1,9 @@
 #include "feed/polymarket_parser.h"
 
 #include <optional>
+#include <string>
+
+#include "core/sha1.h"
 
 namespace basis::feed {
 
@@ -100,6 +103,103 @@ bool append_book_side(const element& event, const char* key, model::Side side,
   return true;
 }
 
+// Rebuilds the venue's canonical order book summary and checks its SHA-1
+// against the hash the message carries. The payload layout matches the
+// server's struct serialization, established against Polymarket's own
+// client library and confirmed byte-for-byte on recorded live sessions:
+//
+//   {"market":M,"asset_id":A,"timestamp":T,"hash":"","bids":[...],
+//    "asks":[...],"min_order_size":"5","tick_size":TS,"neg_risk":NR,
+//    "last_trade_price":LTP}
+//
+// Two fields need care. min_order_size is not on the wire; "5" is the
+// platform default and matched every observed market, and a market where
+// it differs shows up as Mismatched, never as silently verified.
+// neg_risk is not on the wire either, so both values are tried; that
+// weakens the check by one bit, not its ability to catch a corrupted
+// book. Values are spliced back verbatim (ids and decimal strings need
+// no JSON escaping), so a level the parser rejected can never be
+// laundered into a verified book.
+enum class HashCheck : std::uint8_t {
+  NotApplicable,
+  Verified,
+  Mismatched,
+  Unverifiable,
+};
+
+HashCheck verify_book_hash(const element& event) {
+  std::string_view market;
+  std::string_view asset_id;
+  std::string_view timestamp;
+  std::string_view wire_hash;
+  if (event["hash"].get_string().get(wire_hash) != SUCCESS) {
+    return HashCheck::NotApplicable;
+  }
+  if (event["market"].get_string().get(market) != SUCCESS ||
+      event["asset_id"].get_string().get(asset_id) != SUCCESS ||
+      event["timestamp"].get_string().get(timestamp) != SUCCESS) {
+    return HashCheck::Unverifiable;
+  }
+  // The venue hashes over tick_size and last_trade_price, but only its
+  // subscribe-time snapshots carry them; periodic refreshes omit them
+  // and are honestly unverifiable from the wire alone.
+  std::string_view tick_size;
+  std::string_view last_trade_price;
+  if (event["tick_size"].get_string().get(tick_size) != SUCCESS ||
+      event["last_trade_price"].get_string().get(last_trade_price) !=
+          SUCCESS) {
+    return HashCheck::Unverifiable;
+  }
+
+  std::string sides;
+  for (const char* key : {"bids", "asks"}) {
+    sides += (key[0] == 'b') ? R"("bids":[)" : R"(,"asks":[)";
+    array levels;
+    if (event[key].get_array().get(levels) != SUCCESS) {
+      return HashCheck::Unverifiable;
+    }
+    bool first = true;
+    for (const element level : levels) {
+      std::string_view price;
+      std::string_view size;
+      if (level["price"].get_string().get(price) != SUCCESS ||
+          level["size"].get_string().get(size) != SUCCESS) {
+        return HashCheck::Unverifiable;
+      }
+      if (!first) sides += ',';
+      first = false;
+      sides += R"({"price":")";
+      sides += price;
+      sides += R"(","size":")";
+      sides += size;
+      sides += R"("})";
+    }
+    sides += ']';
+  }
+
+  for (const char* neg_risk : {"true", "false"}) {
+    std::string payload = R"({"market":")";
+    payload += market;
+    payload += R"(","asset_id":")";
+    payload += asset_id;
+    payload += R"(","timestamp":")";
+    payload += timestamp;
+    payload += R"(","hash":"",)";
+    payload += sides;
+    payload += R"(,"min_order_size":"5","tick_size":")";
+    payload += tick_size;
+    payload += R"(","neg_risk":)";
+    payload += neg_risk;
+    payload += R"(,"last_trade_price":")";
+    payload += last_trade_price;
+    payload += R"("})";
+    if (core::sha1_hex(payload) == wire_hash) {
+      return HashCheck::Verified;
+    }
+  }
+  return HashCheck::Mismatched;
+}
+
 // Handles one event object. Returns false on structural damage.
 bool handle_event(const element& event, std::int64_t recv_ns,
                   ParseResult& result) {
@@ -123,6 +223,12 @@ bool handle_event(const element& event, std::int64_t recv_ns,
         !append_book_side(event, "asks", model::Side::Ask, base,
                           result.deltas)) {
       return false;
+    }
+    switch (verify_book_hash(event)) {
+      case HashCheck::Verified:     ++result.hashes_verified; break;
+      case HashCheck::Mismatched:   ++result.hashes_mismatched; break;
+      case HashCheck::Unverifiable: ++result.hashes_unverifiable; break;
+      case HashCheck::NotApplicable: break;
     }
     return true;
   }

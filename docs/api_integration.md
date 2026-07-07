@@ -54,8 +54,19 @@ unsubscribe + subscribe). First live session:
   - `price_change` - delta: `price_changes[]` each with `asset_id`, `price`,
     `size` (string; `"0"` = level removed), `side` (BUY/SELL), `hash`, optional
     `best_bid`/`best_ask`; plus top-level `market`, `timestamp`.
-  - Integrity is by `hash`, not a sequence number -> on hash mismatch,
-    re-subscribe / re-snapshot. (Different gap-recovery mechanism than Kalshi.)
+  - Integrity is by `hash`, not a sequence number. (Different gap-recovery
+    mechanism than Kalshi.) The hash is SHA-1 over the server's canonical
+    order book summary: `{"market","asset_id","timestamp","hash":"",
+    "bids","asks","min_order_size","tick_size","neg_risk",
+    "last_trade_price"}` minified in that key order; established against
+    Polymarket's py-clob-client and confirmed byte-for-byte on recorded
+    sessions. The parser recomputes it for subscribe-time snapshots (they
+    carry every hashed field; `min_order_size` is the platform default
+    "5", `neg_risk` is tried both ways). The periodic refresh form omits
+    `tick_size`, `last_trade_price`, and any way to know the current
+    trade price, so those are counted as unverifiable rather than
+    guessed: verified 13/13 on the committed 30 minute capture, 0
+    mismatched.
 - **Identification**: `market` = condition id (0x... hash); `asset_id` = token
   id for one outcome. A binary market has two tokens (YES/NO); we track the YES
   token and derive NO = 1 - YES.

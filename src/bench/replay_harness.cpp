@@ -97,6 +97,9 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
           break;
       }
       if (parsed.gap) ++stats_.gaps;
+      stats_.hashes_verified += parsed.hashes_verified;
+      stats_.hashes_mismatched += parsed.hashes_mismatched;
+      stats_.hashes_unverifiable += parsed.hashes_unverifiable;
 
       for (const auto& delta : parsed.deltas) {
         normalizer_.on_delta(delta);
