@@ -16,6 +16,7 @@ add_executable(basis_tests
   test_replay_harness.cpp
   test_synth_generator.cpp
   test_counting_resource.cpp
+  test_sha1.cpp
   test_bounded_queue.cpp
 )
 target_link_libraries(basis_tests PRIVATE basis_bench GTest::gtest_main)

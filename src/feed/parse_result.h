@@ -36,6 +36,15 @@ struct ParseResult {
   // gap recovery needs it: re-subscribing a live subscription is rejected,
   // so the feed unsubscribes this sid first.
   std::uint64_t sid = 0;
+
+  // Integrity-hash accounting for book snapshots that carry one
+  // (Polymarket), counted per book because one wire message can bundle
+  // several. Unverifiable means the snapshot omits fields the venue
+  // hashes over, which its periodic refresh form does
+  // (docs/api_integration.md); those are counted, never guessed at.
+  std::uint32_t hashes_verified = 0;
+  std::uint32_t hashes_mismatched = 0;
+  std::uint32_t hashes_unverifiable = 0;
 };
 
 constexpr const char* to_string(ParseStatus s) {

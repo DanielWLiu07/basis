@@ -151,6 +151,15 @@ void print_stats(const basis::bench::ReplayStats& stats) {
               static_cast<unsigned long long>(stats.malformed_lines),
               static_cast<unsigned long long>(stats.gaps),
               static_cast<unsigned long long>(stats.ignored));
+  if (stats.hashes_verified + stats.hashes_mismatched +
+          stats.hashes_unverifiable >
+      0) {
+    std::printf("integrity %llu snapshot hashes verified, %llu mismatched, "
+                "%llu unverifiable (refresh form)\n",
+                static_cast<unsigned long long>(stats.hashes_verified),
+                static_cast<unsigned long long>(stats.hashes_mismatched),
+                static_cast<unsigned long long>(stats.hashes_unverifiable));
+  }
 
   const auto& lat = stats.latency;
   std::printf("latency   ingest-to-signal per record (us): "

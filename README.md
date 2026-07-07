@@ -174,6 +174,11 @@ companion voxel-engine project follows). Recorded so far:
   the registry parser under ASan and UBSan, 100k executions per target
   per commit, 2M per target in local deep runs, zero findings in project
   code to date.
+- Venue integrity hashes are recomputed, not trusted: the parser rebuilds
+  Polymarket's canonical book summary and checks its SHA-1 on every
+  snapshot that carries the hashed fields, 13/13 verified with 0
+  mismatches on the committed capture (docs/api_integration.md has the
+  recipe).
 
 The cross-venue lead measurement waits on a simultaneous both-venue
 recording (Kalshi credentials); until then that figure stays a bracketed
