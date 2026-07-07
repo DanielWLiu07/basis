@@ -61,6 +61,55 @@ TEST(CrossCorrelationEstimator, RecoversInjectedLead) {
   EXPECT_EQ(result.samples, 2000u);
 }
 
+TEST(CrossCorrelationEstimator, BootstrapIntervalContainsTheTrueLead) {
+  const auto pair = make_pair(2000, 3);  // true lead: 300 ms
+  CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,
+                                              .max_lag_bins = 20});
+  for (std::size_t i = 0; i < pair.a.size(); ++i) {
+    est.observe(pair.a[i], pair.b[i],
+                static_cast<std::int64_t>(i) * 100 * kMs);
+  }
+  const auto result = est.estimate();
+  EXPECT_EQ(result.resamples, 200u);
+  // The tolerance is float representation only (3 grid steps of 0.1 s is
+  // 0.30000000000000004); a clean synthetic lead collapses the interval
+  // to nearly a point.
+  EXPECT_LE(result.ci_low_seconds, 0.3 + 1e-9);
+  EXPECT_GE(result.ci_high_seconds, 0.3 - 1e-9);
+  EXPECT_GE(result.ci_low_seconds, 0.0);
+  EXPECT_LE(result.ci_high_seconds, 0.6);
+}
+
+TEST(CrossCorrelationEstimator, BootstrapIsDeterministic) {
+  const auto pair = make_pair(1000, 3);
+  const auto run = [&] {
+    CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,
+                                                .max_lag_bins = 20});
+    for (std::size_t i = 0; i < pair.a.size(); ++i) {
+      est.observe(pair.a[i], pair.b[i],
+                  static_cast<std::int64_t>(i) * 100 * kMs);
+    }
+    return est.estimate();
+  };
+  const auto first = run();
+  const auto second = run();
+  EXPECT_DOUBLE_EQ(first.ci_low_seconds, second.ci_low_seconds);
+  EXPECT_DOUBLE_EQ(first.ci_high_seconds, second.ci_high_seconds);
+}
+
+TEST(CrossCorrelationEstimator, BootstrapDeclinesOnShortSeries) {
+  // Fewer than two blocks of returns: an interval from that would be
+  // noise wearing a confidence costume.
+  const auto pair = make_pair(60, 3);
+  CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,
+                                              .max_lag_bins = 10});
+  for (std::size_t i = 0; i < pair.a.size(); ++i) {
+    est.observe(pair.a[i], pair.b[i],
+                static_cast<std::int64_t>(i) * 100 * kMs);
+  }
+  EXPECT_EQ(est.estimate().resamples, 0u);
+}
+
 TEST(CrossCorrelationEstimator, LeadSignFlipsWhenBLeads) {
   const auto pair = make_pair(2000, 3);
   CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,

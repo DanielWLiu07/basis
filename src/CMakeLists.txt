@@ -36,6 +36,7 @@ add_library(basis_normalize
 target_link_libraries(basis_normalize PUBLIC basis_model)
 
 add_library(basis_analytics
+  analytics/event_study.cpp
   analytics/lead_lag.cpp
 )
 target_link_libraries(basis_analytics PUBLIC basis_model)

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "analytics/divergence.h"
+#include "analytics/event_study.h"
 #include "analytics/lead_lag.h"
 #include "api/in_process_session.h"
 #include "bench/latency_recorder.h"
@@ -40,7 +41,8 @@ struct ReplayStats {
     double basis_min = 0.0;
     double basis_max = 0.0;
     double basis_last = 0.0;
-    analytics::LeadLagResult lead_lag;  // positive: Kalshi leads
+    analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
+    analytics::EventStudyResult event_study;  // independent cross-check
   };
   std::vector<EventReport> events;  // sorted by event id
 };
@@ -96,6 +98,7 @@ class ReplayHarness {
   struct EventAnalytics {
     analytics::DivergenceTracker divergence;
     analytics::CrossCorrelationEstimator lead_lag;
+    analytics::EventStudyEstimator event_study;
 
     explicit EventAnalytics(const analytics::LeadLagConfig& config)
         : lead_lag(config) {}

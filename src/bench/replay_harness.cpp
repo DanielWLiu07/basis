@@ -35,6 +35,7 @@ void ReplayHarness::on_event_update(const std::string& event_id,
   if (kalshi_mid && poly_mid) {
     it->second.divergence.observe(*kalshi_mid - *poly_mid);
     it->second.lead_lag.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
+    it->second.event_study.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
   }
 
   if (!session_) return;
@@ -126,6 +127,7 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.basis_last = ea.divergence.last();
     }
     report.lead_lag = ea.lead_lag.estimate();
+    report.event_study = ea.event_study.estimate();
     stats_.events.push_back(std::move(report));
   }
   std::sort(stats_.events.begin(), stats_.events.end(),
