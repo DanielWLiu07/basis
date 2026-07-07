@@ -183,6 +183,24 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   ll.lead_seconds >= 0 ? ll.lead_seconds : -ll.lead_seconds,
                   ll.correlation,
                   static_cast<unsigned long long>(ll.samples));
+      if (ll.resamples > 0) {
+        std::printf("           95%% ci %.3fs..%.3fs "
+                    "(%llu block-bootstrap resamples)\n",
+                    ll.ci_low_seconds, ll.ci_high_seconds,
+                    static_cast<unsigned long long>(ll.resamples));
+      }
+    }
+    const auto& es = event.event_study;
+    if (es.moves > 0 || es.reverse_moves > 0) {
+      std::printf("  events   kalshi moves: %llu/%llu followed by "
+                  "polymarket, median %.3fs  |  reverse: %llu/%llu, "
+                  "median %.3fs\n",
+                  static_cast<unsigned long long>(es.followed),
+                  static_cast<unsigned long long>(es.moves),
+                  es.median_follow_seconds,
+                  static_cast<unsigned long long>(es.reverse_followed),
+                  static_cast<unsigned long long>(es.reverse_moves),
+                  es.reverse_median_follow_seconds);
     }
   }
 }

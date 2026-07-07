@@ -59,6 +59,15 @@ TEST(SynthGenerator, ReplayRecoversTheInjectedLead) {
   // and jittered arrival times; one grid bin (100 ms) of slack.
   EXPECT_NEAR(event.lead_lag.lead_seconds, 0.4, 0.11);
   EXPECT_GT(event.lead_lag.correlation, 0.5);
+
+  // The bootstrap interval must contain the injected truth, and the
+  // independent event study must agree with the cross-correlation: two
+  // unrelated methods, one answer, or the closed loop fails.
+  ASSERT_GT(event.lead_lag.resamples, 0u);
+  EXPECT_LE(event.lead_lag.ci_low_seconds, 0.4 + 0.11);
+  EXPECT_GE(event.lead_lag.ci_high_seconds, 0.4 - 0.11);
+  ASSERT_GT(event.event_study.followed, 100u);
+  EXPECT_NEAR(event.event_study.median_follow_seconds, 0.4, 0.11);
 }
 
 TEST(SynthGenerator, SameSeedSameFile) {
