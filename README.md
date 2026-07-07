@@ -24,10 +24,11 @@ Figures regenerate from the committed capture with
 
 ## Status
 
-The offline engine runs end to end: real venue wire formats are parsed,
-normalized into per-event unified books, and measured for basis, lead-lag,
-and per-record ingest-to-signal latency, all driven by deterministic replay.
-Both live feeds are built behind the same `FeedAdapter` seam: Polymarket
+The engine runs end to end, offline and live: real venue wire formats are
+parsed, normalized into per-event unified books, and measured for basis,
+lead-lag, and per-record ingest-to-signal latency, driven either by
+deterministic replay or by `basis live` streaming the venues in real
+time. Both live feeds sit behind the same `FeedAdapter` seam: Polymarket
 records real sessions over TLS WebSocket, and the Kalshi adapter (signed
 session, gap-triggered re-snapshot) is verified offline down to the RSA-PSS
 signature and waits only on account credentials for its first live capture.
@@ -53,10 +54,11 @@ and watch the engine report that lead back.
 ```
 
 The replay prints message accounting (nothing is ever silently dropped),
-per-event basis statistics, the recovered lead, and ingest-to-signal latency
-percentiles. The same closed loop runs in the test suite and in CI's
-performance gate: if the engine cannot recover an injected lead through the
-real parsers, the build is red.
+per-event basis statistics, the recovered lead with a bootstrap confidence
+interval and an independent event-study cross-check, and ingest-to-signal
+latency percentiles. The same closed loop runs in the test suite and in
+CI's performance gate: if the engine cannot recover an injected lead
+through the real parsers, by both methods, the build is red.
 
 ![Synthetic session with the injected 400 ms cross-venue lead visible](docs/img/synth-lead.png)
 
@@ -141,7 +143,7 @@ src/core/       logging, clocks, hashing, counting allocator, portable rng
 src/model/      canonical schema: venue, side, order book, unified book
 src/feed/       venue parsers, live feed adapters, feedlog capture format
 src/normalize/  cross-venue contract registry + event router (NO-side fold)
-src/analytics/  divergence and cross-correlation lead-lag
+src/analytics/  divergence, cross-correlation lead-lag, event study
 src/api/        BLPAPI-style subscription interface
 src/bench/      replay harness, latency recorder, synthetic sessions
 src/net/        TLS WebSocket client + Kalshi request signing
