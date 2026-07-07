@@ -9,6 +9,14 @@ struct LeadLagResult {
   double        lead_seconds = 0.0;  // positive: venue A leads venue B
   double        correlation  = 0.0;  // peak cross-correlation at that lag
   std::uint64_t samples      = 0;
+
+  // 95 percent bootstrap confidence interval for the lead, from paired
+  // moving-block resampling of the return series. resamples = 0 means the
+  // interval was not computed (too little data or bootstrap disabled),
+  // and the bounds are meaningless.
+  double        ci_low_seconds  = 0.0;
+  double        ci_high_seconds = 0.0;
+  std::uint64_t resamples       = 0;
 };
 
 // Estimates which venue's price moves first for a matched event, by
@@ -25,6 +33,18 @@ class LeadLagEstimator {
 struct LeadLagConfig {
   std::int64_t grid_ns = 100'000'000;  // resample interval: 100 ms
   int max_lag_bins = 100;              // scan lags of +-10 s at the default grid
+
+  // Bootstrap parameters. Paired blocks preserve both each series' own
+  // autocorrelation and the cross-venue structure the estimate rests on;
+  // resampling single points would destroy exactly what is being
+  // measured. The per-resample lag scan stays within a window around the
+  // full-sample peak: this is an interval for the located lead, not a
+  // fresh global search. 0 resamples disables the bootstrap. The seed
+  // makes the interval reproducible run to run.
+  int bootstrap_resamples = 200;
+  int bootstrap_block_bins = 50;       // 5 s blocks at the default grid
+  int bootstrap_lag_halfwidth = 20;    // +-2 s around the peak
+  std::uint32_t bootstrap_seed = 42;
 };
 
 // Cross-correlation implementation:
