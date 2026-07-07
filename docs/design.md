@@ -131,6 +131,19 @@ ingest-to-signal latency PLAN.md talks about.
   "observational, never causal" rule. The estimator is validated by a test
   that generates series with a known injected lead and checks it is
   recovered.
+- The point estimate ships with a 95 percent confidence interval from a
+  paired moving-block bootstrap: whole blocks of (a, b) return pairs are
+  resampled together, preserving each series' autocorrelation and the
+  cross-venue timing, and the per-resample peak search stays near the
+  full-sample peak (an interval for the located lead, not a fresh global
+  search). Fixed seed through core/rng.h, so the interval is reproducible.
+- `EventStudyEstimator` is the independent cross-check the methodology
+  calls for: a move is a repricing of at least a threshold from a running
+  reference, a follow is the other venue moving the same way within a
+  window, reported as median follow time with matched counts, plus the
+  mirror direction as the control. Two unrelated methods agreeing on the
+  lead is what makes the finding defensible; the closed-loop test requires
+  both to recover the injected lead.
 
 ### api
 
