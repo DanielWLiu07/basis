@@ -31,8 +31,13 @@ inline double normal(std::mt19937& rng, double mean, double stddev) {
 inline std::int64_t uniform_int(std::mt19937& rng, std::int64_t lo,
                                 std::int64_t hi) {
   const auto range = static_cast<std::uint64_t>(hi - lo) + 1;
-  const std::uint64_t draw =
-      (static_cast<std::uint64_t>(rng()) << 32) | rng();
+  // Draw into named locals on separate statements: the two rng() calls
+  // are unsequenced as operands of |, so combining them inline would let
+  // the compiler pick which 32-bit half is drawn first, and this helper
+  // exists precisely to keep the sequence identical across toolchains.
+  const std::uint64_t high = static_cast<std::uint64_t>(rng());
+  const std::uint64_t low = static_cast<std::uint64_t>(rng());
+  const std::uint64_t draw = (high << 32) | low;
   return lo + static_cast<std::int64_t>(draw % range);
 }
 
