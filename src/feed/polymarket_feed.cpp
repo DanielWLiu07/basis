@@ -55,6 +55,15 @@ void PolymarketFeed::on_message(std::string_view payload,
     ++malformed_;
     return;
   }
+  hashes_verified_ += parsed.hashes_verified;
+  if (parsed.hashes_mismatched > 0) {
+    // A book whose recomputed hash disagrees with the venue's is corrupt
+    // somewhere between their matching engine and this process. Counted
+    // and shouted; the periodic snapshots will replace the state either
+    // way, so no automated recovery fires from here.
+    hashes_mismatched_ += parsed.hashes_mismatched;
+    log::warn("polymarket feed: snapshot hash mismatch");
+  }
   deltas_ += parsed.deltas.size();
   if (!sink_) return;
   for (const auto& delta : parsed.deltas) sink_(delta);

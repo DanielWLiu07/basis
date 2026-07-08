@@ -444,9 +444,13 @@ int run_record(const std::vector<std::string_view>& args) {
               static_cast<unsigned long long>(written.load()),
               out_path.c_str(),
               static_cast<unsigned long long>(rejected.load()));
-  std::printf("  polymarket: %llu malformed, %llu reconnects\n",
+  std::printf("  polymarket: %llu malformed, %llu reconnects, "
+              "%llu hashes verified, %llu mismatched\n",
               static_cast<unsigned long long>(poly_feed.malformed()),
-              static_cast<unsigned long long>(poly_feed.reconnects()));
+              static_cast<unsigned long long>(poly_feed.reconnects()),
+              static_cast<unsigned long long>(poly_feed.hashes_verified()),
+              static_cast<unsigned long long>(
+                  poly_feed.hashes_mismatched()));
   if (kalshi_feed) {
     std::printf("  kalshi: %llu malformed, %llu gaps, %llu reconnects\n",
                 static_cast<unsigned long long>(kalshi_feed->malformed()),
@@ -636,10 +640,14 @@ int run_live(const std::vector<std::string_view>& args) {
               static_cast<unsigned long long>(queue.popped()),
               queue.high_water(),
               static_cast<unsigned long long>(queue.blocked_pushes()));
-  std::printf("feeds     poly %llu msgs %llu malformed %llu reconnects",
+  std::printf("feeds     poly %llu msgs %llu malformed %llu reconnects "
+              "%llu hashes ok %llu mismatched",
               static_cast<unsigned long long>(poly_feed.messages()),
               static_cast<unsigned long long>(poly_feed.malformed()),
-              static_cast<unsigned long long>(poly_feed.reconnects()));
+              static_cast<unsigned long long>(poly_feed.reconnects()),
+              static_cast<unsigned long long>(poly_feed.hashes_verified()),
+              static_cast<unsigned long long>(
+                  poly_feed.hashes_mismatched()));
   if (kalshi_feed) {
     std::printf("  |  kalshi %llu msgs %llu malformed %llu gaps "
                 "%llu reconnects",
