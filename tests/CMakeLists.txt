@@ -38,4 +38,6 @@ endif()
 target_compile_definitions(basis_tests PRIVATE
   BASIS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-gtest_discover_tests(basis_tests)
+# A per-test timeout so a deadlock (the socket/thread tests spin up real
+# servers) fails the run in a bounded time instead of hanging CI for hours.
+gtest_discover_tests(basis_tests PROPERTIES TIMEOUT 120)
