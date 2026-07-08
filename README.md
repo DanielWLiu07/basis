@@ -162,6 +162,10 @@ companion voxel-engine project follows). Recorded so far:
 - `docs/bench/latency.md`: on a committed 30-minute live capture (34,731
   messages, 266,597 deltas, zero loss), ingest-to-signal latency is
   p50 0.5 us / p99 37 us at ~840k records/sec, stable across runs.
+- `docs/bench/soak.md`: four unattended hours live (59,891 messages, 49 MB),
+  3 natural venue disconnects survived, zero malformed, zero rejected,
+  zero gaps; same latency percentiles as the shorter capture, so the
+  numbers are properties of the engine, not of one lucky recording.
 - `docs/bench/allocator.md`: hot path at 1-2 heap allocations per message,
   3.7M records/sec max-rate synthetic replay on an Apple M4, bdlma arenas
   at parity with the global heap.
