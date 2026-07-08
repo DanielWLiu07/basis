@@ -26,7 +26,7 @@ namespace ssl = asio::ssl;
 using tcp = asio::ip::tcp;
 
 // All the per-connection state, built fresh on every (re)connect attempt
-// and only ever touched from the IO thread, except the socket close in
+// and only ever touched from the IO thread, except the socket shutdown in
 // stop() which is what breaks a blocking read.
 struct WsClient::Connection {
   asio::io_context ioc;
@@ -61,13 +61,16 @@ void WsClient::stop() {
     return;
   }
   {
-    // Break a blocked read; the IO thread sees an error and exits its loop.
+    // Break a blocked read: shutdown() from another thread is the
+    // documented way to wake a socket blocked in recv, and the IO thread
+    // then sees the error and destroys the connection (which closes the
+    // socket) itself. Deliberately not close() here: closing the fd from
+    // this thread while the IO thread is mid-read races on the fd.
     const std::lock_guard<std::mutex> lock(conn_mutex_);
     if (conn_ != nullptr) {
       boost::system::error_code ec;
       conn_->ws.next_layer().next_layer().shutdown(tcp::socket::shutdown_both,
                                                    ec);
-      conn_->ws.next_layer().next_layer().close(ec);
     }
   }
   if (io_thread_.joinable()) io_thread_.join();
@@ -92,17 +95,34 @@ void WsClient::run() {
     auto conn = std::make_unique<Connection>();
     boost::system::error_code ec;
 
+    // Trust anchors live on the context's certificate store, which the
+    // SSL object shares by reference, so these apply even though the
+    // stream already exists.
     conn->tls.set_default_verify_paths(ec);
     if (!config_.trusted_ca_pem.empty()) {
+      boost::system::error_code ca_ec;
       conn->tls.add_certificate_authority(
-          asio::buffer(config_.trusted_ca_pem), ec);
+          asio::buffer(config_.trusted_ca_pem), ca_ec);
+      if (ca_ec) {
+        // A trust anchor that will not load means we would fall back to
+        // the system store alone and likely fail closed later; say so
+        // rather than silently dropping it.
+        log::warn("ws: trusted_ca_pem rejected: " + ca_ec.message());
+      }
     }
-    conn->tls.set_verify_mode(ssl::verify_peer);
-    // Peer verification alone accepts any valid certificate for any
-    // host; pinning the expected hostname is what stops a redirected
-    // connection from presenting someone else's perfectly valid cert.
-    conn->tls.set_verify_callback(ssl::host_name_verification(config_.host),
-                                  ec);
+    // verify_mode and the verify callback must be set on the stream, not
+    // the context: OpenSSL copies both into the SSL object when it is
+    // created (which already happened when Connection was built), so a
+    // later change on the context would silently never take effect and
+    // the connection would run unverified. Peer verification alone
+    // accepts any valid certificate for any host; pinning the expected
+    // hostname is what stops a redirected connection from presenting
+    // someone else's perfectly valid certificate.
+    conn->ws.next_layer().set_verify_mode(ssl::verify_peer, ec);
+    if (!ec) {
+      conn->ws.next_layer().set_verify_callback(
+          ssl::host_name_verification(config_.host), ec);
+    }
 
     // Resolve + TCP connect.
     tcp::resolver resolver(conn->ioc);
