@@ -86,4 +86,51 @@ TEST(Reconnect, BookConvergesAcrossForcedDisconnects) {
   EXPECT_LE(feed.messages(), 5u * 21u);  // never more than was sent
 }
 
+// The counterpart that gives the test above its teeth: the same server,
+// but the client is not told to trust its self-signed certificate. With
+// verification actually enforced, the handshake fails on every attempt
+// and not one book delta arrives. If verification were off (the settings
+// applied to the context after the SSL object was built, say), the
+// untrusted certificate would sail through and deltas would flow.
+TEST(Reconnect, RejectsAnUntrustedCertificate) {
+  const auto identity = basis::testing::make_self_signed_identity();
+  basis::testing::FlakyWsServer server(
+      {.connections = 30, .deltas_per_connection = 5, .asset_id = "1000001"},
+      identity);
+  server.start();
+
+  std::mutex mutex;
+  int deltas = 0;
+
+  basis::feed::PolymarketFeed feed(
+      {.token_ids = {"1000001"},
+       .host = "127.0.0.1",
+       .port = std::to_string(server.port()),
+       // trusted_ca_pem deliberately omitted: the server's certificate is
+       // self-signed and in no trust store this client has.
+       .initial_backoff_ms = 25});
+  feed.set_sink([&](const basis::model::BookDelta&) {
+    const std::lock_guard<std::mutex> lock(mutex);
+    ++deltas;
+  });
+  feed.start();
+
+  // Give the client well over a second of reconnect attempts; a bypassed
+  // check would have delivered the first snapshot within tens of ms.
+  const auto deadline = std::chrono::steady_clock::now() + 1500ms;
+  while (std::chrono::steady_clock::now() < deadline) {
+    {
+      const std::lock_guard<std::mutex> lock(mutex);
+      if (deltas > 0) break;  // fail fast if the cert was accepted
+    }
+    std::this_thread::sleep_for(20ms);
+  }
+  feed.stop();
+  server.stop();
+
+  const std::lock_guard<std::mutex> lock(mutex);
+  EXPECT_EQ(deltas, 0);
+  EXPECT_EQ(feed.messages(), 0u);
+}
+
 }  // namespace
