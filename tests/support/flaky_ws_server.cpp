@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <thread>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
@@ -51,8 +52,13 @@ void FlakyWsServer::start() {
 
 void FlakyWsServer::stop() {
   if (running_.exchange(false)) {
+    // The server thread polls running_ between non-blocking accepts, so
+    // clearing it above is what actually stops the loop; closing the
+    // acceptor just releases the port. (Closing alone would not do it:
+    // closing an acceptor does not reliably wake a blocking accept() in
+    // another thread on Linux, which is why the accept is non-blocking.)
     boost::system::error_code ec;
-    impl_->acceptor.close(ec);  // breaks a blocking accept
+    impl_->acceptor.close(ec);
   }
   if (thread_.joinable()) thread_.join();
 }
@@ -102,10 +108,26 @@ std::string FlakyWsServer::delta_json(int price_cents, const char* side,
 
 void FlakyWsServer::run() {
   int step = 0;
+  impl_->acceptor.non_blocking(true);
   for (int c = 0; c < config_.connections && running_.load(); ++c) {
     try {
       tcp::socket socket(impl_->ioc);
-      impl_->acceptor.accept(socket);
+      // Interruptible accept: poll in non-blocking mode and re-check
+      // running_, so stop() terminates the loop within a few ms on every
+      // platform. A blocking accept() woken only by acceptor.close() hangs
+      // on Linux, where the test may leave the server waiting for a
+      // connection that never comes (client used fewer than the budget).
+      boost::system::error_code accept_ec = asio::error::would_block;
+      while (running_.load() && (accept_ec == asio::error::would_block ||
+                                 accept_ec == asio::error::try_again)) {
+        impl_->acceptor.accept(socket, accept_ec);
+        if (accept_ec == asio::error::would_block ||
+            accept_ec == asio::error::try_again) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+      }
+      if (!running_.load() || accept_ec) break;
+      socket.non_blocking(false);  // blocking for the synchronous exchange
 
       websocket::stream<ssl::stream<tcp::socket>> ws(std::move(socket),
                                                      impl_->tls);
