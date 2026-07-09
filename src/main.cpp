@@ -48,13 +48,14 @@ int usage() {
       "      injected cross-venue lead; ids match configs/synthetic.toml)\n"
       "\n"
       "  basis replay <in.feedlog> [--config <contracts.toml>]\n"
-      "               [--alloc heap|count|bde]\n"
+      "               [--alloc heap|count|bde] [--breakdown]\n"
       "      replay a capture through parse -> normalize -> analytics -> api\n"
       "      and report basis, lead-lag, and ingest-to-signal latency\n"
       "      (default config: configs/synthetic.toml)\n"
       "      --alloc count reports heap traffic per message; --alloc bde\n"
       "      runs the hot path on Bloomberg bdlma arenas (needs a build\n"
-      "      with BASIS_ENABLE_BDE)\n"
+      "      with BASIS_ENABLE_BDE); --breakdown splits latency into parse\n"
+      "      vs downstream (a separate profiling run, not the headline)\n"
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
@@ -102,6 +103,15 @@ std::string flag_string(const std::vector<std::string_view>& args,
     if (args[i] == name) return std::string(args[i + 1]);
   }
   return fallback;
+}
+
+// Presence-only flag: true if `name` appears anywhere in args.
+bool has_flag(const std::vector<std::string_view>& args,
+              std::string_view name) {
+  for (const auto& arg : args) {
+    if (arg == name) return true;
+  }
+  return false;
 }
 
 int run_synth(const std::vector<std::string_view>& args) {
@@ -242,6 +252,7 @@ int run_replay(const std::vector<std::string_view>& args) {
   const auto config_path =
       flag_string(args, "--config", "configs/synthetic.toml");
   const auto alloc_mode = flag_string(args, "--alloc", "heap");
+  const bool breakdown = has_flag(args, "--breakdown");
 
   std::string error;
   const auto registry =
@@ -281,6 +292,7 @@ int run_replay(const std::vector<std::string_view>& args) {
   basis::api::InProcessSession session;
   basis::bench::ReplayHarness harness(*registry, &session, {}, book_mr);
   harness.set_parse_arena(parse_arena);
+  harness.set_breakdown(breakdown);
   const auto stats = harness.run(in_path, &error);
   if (!stats) {
     basis::log::error(error);
@@ -308,6 +320,24 @@ int run_replay(const std::vector<std::string_view>& args) {
                 static_cast<double>(parse.bytes()) / n,
                 static_cast<unsigned long long>(counting_books.allocations()),
                 static_cast<double>(counting_books.allocations()) / n);
+  }
+  if (breakdown) {
+    const double staged = static_cast<double>(stats->parse_ns_total +
+                                              stats->downstream_ns_total);
+    if (staged > 0.0) {
+      // The per-stage clock read inflates the total, so this run is for
+      // the split, not the headline latency (which the default run gives).
+      std::printf("breakdown parse %4.1f%%  downstream %4.1f%%  "
+                  "(%.0f + %.0f ns/msg over %llu records)\n",
+                  100.0 * static_cast<double>(stats->parse_ns_total) / staged,
+                  100.0 * static_cast<double>(stats->downstream_ns_total) /
+                      staged,
+                  static_cast<double>(stats->parse_ns_total) /
+                      static_cast<double>(stats->records),
+                  static_cast<double>(stats->downstream_ns_total) /
+                      static_cast<double>(stats->records),
+                  static_cast<unsigned long long>(stats->records));
+    }
   }
   return 0;
 }
