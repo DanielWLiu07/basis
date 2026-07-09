@@ -41,6 +41,12 @@ struct ReplayStats {
   LatencyRecorder::Report latency;  // per-record ingest-to-signal
   std::int64_t pipeline_ns = 0;     // sum of measured spans, excludes file io
 
+  // Per-stage totals, populated only in breakdown mode (set_breakdown).
+  // The split is parse (venue JSON to canonical deltas) vs downstream
+  // (normalize, book apply, analytics, publish). Zero when off.
+  std::int64_t parse_ns_total = 0;
+  std::int64_t downstream_ns_total = 0;
+
   struct EventReport {
     std::string event_id;
     std::uint64_t basis_samples = 0;
@@ -84,6 +90,12 @@ class ReplayHarness {
   // Must outlive run().
   void set_parse_arena(ParseArena* arena) { parse_arena_ = arena; }
 
+  // Time parse and the downstream pipeline separately. Off by default so
+  // the headline latency stays a single clock bracket; the extra per-stage
+  // clock read inflates the total, so a breakdown run is for the relative
+  // split, not for the absolute latency number.
+  void set_breakdown(bool on) { breakdown_ = on; }
+
   // Replays at max rate. Nullopt only if the file cannot be opened.
   std::optional<ReplayStats> run(const std::string& feedlog_path,
                                  std::string* error = nullptr);
@@ -101,6 +113,7 @@ class ReplayHarness {
   feed::PolymarketParser polymarket_;
   normalize::Normalizer normalizer_;
   ParseArena* parse_arena_ = nullptr;
+  bool breakdown_ = false;
 
   struct EventAnalytics {
     analytics::DivergenceTracker divergence;

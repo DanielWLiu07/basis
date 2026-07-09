@@ -84,6 +84,7 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
           is_kalshi ? kalshi_.parse(record->payload, record->recv_ns, parse_mr)
                     : polymarket_.parse(record->payload, record->recv_ns,
                                         parse_mr);
+      const auto t_parsed = breakdown_ ? time::mono_ns() : std::int64_t{0};
 
       switch (parsed.status) {
         case feed::ParseStatus::Ok:
@@ -103,6 +104,11 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
 
       for (const auto& delta : parsed.deltas) {
         normalizer_.on_delta(delta);
+      }
+
+      if (breakdown_) {
+        stats_.parse_ns_total += t_parsed - t0;
+        stats_.downstream_ns_total += time::mono_ns() - t_parsed;
       }
     }
     // parsed is gone; an arena can now drop the whole message at once.

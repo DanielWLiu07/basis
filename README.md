@@ -70,6 +70,10 @@ The configure pulls GoogleTest and simdjson. With `-DBASIS_ENABLE_BDE=ON`
 (`brew install bde` on macOS), `replay --alloc bde` runs the hot path on
 Bloomberg `bdlma` arenas and `--alloc count` reports heap traffic per
 message; `docs/bench/allocator.md` records what those measured.
+`replay --breakdown` splits the ingest-to-signal time into parse versus
+everything downstream (normalize, book apply, analytics, publish); on the
+synthetic session parse is about 60% (simdjson plus canonicalization),
+the rest of the pipeline the other 40%.
 
 ## Live capture
 

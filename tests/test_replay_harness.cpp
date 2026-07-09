@@ -102,3 +102,24 @@ TEST(ReplayHarness, MissingFileReportsError) {
   EXPECT_FALSE(harness.run("/nonexistent/nope.feedlog", &error).has_value());
   EXPECT_NE(error.find("cannot open"), std::string::npos);
 }
+
+TEST(ReplayHarness, BreakdownIsOffByDefaultAndOnWhenAsked) {
+  const auto reg = make_registry();
+
+  ReplayHarness plain(reg);
+  const auto without = plain.run(write_fixture());
+  ASSERT_TRUE(without.has_value());
+  EXPECT_EQ(without->parse_ns_total, 0);       // off: nothing measured
+  EXPECT_EQ(without->downstream_ns_total, 0);
+
+  ReplayHarness profiled(reg);
+  profiled.set_breakdown(true);
+  const auto with = profiled.run(write_fixture());
+  ASSERT_TRUE(with.has_value());
+  // On: both stages accumulate, and their sum is bounded by the whole
+  // measured pipeline time (the two brackets nest inside it).
+  EXPECT_GT(with->parse_ns_total, 0);
+  EXPECT_GT(with->downstream_ns_total, 0);
+  EXPECT_LE(with->parse_ns_total + with->downstream_ns_total,
+            with->pipeline_ns);
+}
