@@ -175,7 +175,8 @@ companion voxel-engine project follows). Recorded so far:
   at parity with the global heap.
 - `scripts/perf_gate.sh` runs in CI on every commit: lead recovery exact,
   integrity counters zero, allocation budget held, throughput floor with
-  10x headroom.
+  10x headroom. It reads `replay --json`, so a change to the human report
+  format cannot silently break the gate.
 - `tests/test_reconnect.cpp` runs in CI on every commit: 4 forced
   mid-subscription TCP drops against a fault-injecting local server, and
   the feed stack must rebuild the book to ground truth with every drop
