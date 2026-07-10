@@ -197,14 +197,15 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
     const auto& ll = e.lead_lag;
     const auto& es = e.event_study;
     std::printf("%s\n    {\"event_id\": \"%s\", \"basis_samples\": %llu, "
-                "\"basis_mean\": %.4f, \"basis_last\": %.4f, "
+                "\"basis_mean\": %.4f, \"basis_stddev\": %.4f, "
+                "\"basis_last\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu}, "
                 "\"event_study\": {\"moves\": %llu, \"followed\": %llu, "
                 "\"median_follow_seconds\": %.4f}}",
                 i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
-                e.basis_mean, e.basis_last,
+                e.basis_mean, e.basis_stddev, e.basis_last,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 u(es.moves), u(es.followed), es.median_follow_seconds);
@@ -251,10 +252,10 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   "two-sided book)\n");
       continue;
     }
-    std::printf("  basis    mean %+.2fc  min %+.2fc  max %+.2fc  "
+    std::printf("  basis    mean %+.2fc  sd %.2fc  min %+.2fc  max %+.2fc  "
                 "last %+.2fc  (%llu samples)\n",
-                event.basis_mean, event.basis_min, event.basis_max,
-                event.basis_last,
+                event.basis_mean, event.basis_stddev, event.basis_min,
+                event.basis_max, event.basis_last,
                 static_cast<unsigned long long>(event.basis_samples));
     const auto& ll = event.lead_lag;
     if (ll.correlation <= 0.0) {
