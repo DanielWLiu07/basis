@@ -48,14 +48,15 @@ int usage() {
       "      injected cross-venue lead; ids match configs/synthetic.toml)\n"
       "\n"
       "  basis replay <in.feedlog> [--config <contracts.toml>]\n"
-      "               [--alloc heap|count|bde] [--breakdown]\n"
+      "               [--alloc heap|count|bde] [--breakdown] [--json]\n"
       "      replay a capture through parse -> normalize -> analytics -> api\n"
       "      and report basis, lead-lag, and ingest-to-signal latency\n"
       "      (default config: configs/synthetic.toml)\n"
       "      --alloc count reports heap traffic per message; --alloc bde\n"
       "      runs the hot path on Bloomberg bdlma arenas (needs a build\n"
       "      with BASIS_ENABLE_BDE); --breakdown splits latency into parse\n"
-      "      vs downstream (a separate profiling run, not the headline)\n"
+      "      vs downstream (a separate profiling run, not the headline);\n"
+      "      --json prints one machine-readable object and nothing else\n"
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
@@ -145,6 +146,70 @@ int run_synth(const std::vector<std::string_view>& args) {
               static_cast<long long>(config.lead_ns / 1'000'000), config.seed);
   std::printf("replay it:  basis replay %s\n", out_path.c_str());
   return 0;
+}
+
+// Machine-readable replay results, for the CI perf gate and any other
+// consumer that should not scrape human text. Event ids come from the
+// registry and are kebab-case, so they need no JSON escaping. Allocation
+// fields are emitted only in --alloc count mode (negative when absent).
+void print_stats_json(const basis::bench::ReplayStats& stats,
+                      double parse_per_msg, double parse_bytes_per_msg,
+                      double book_per_msg) {
+  const auto u = [](std::uint64_t v) {
+    return static_cast<unsigned long long>(v);
+  };
+  const double rps = stats.pipeline_ns > 0
+      ? static_cast<double>(stats.records) * 1e9 /
+            static_cast<double>(stats.pipeline_ns)
+      : 0.0;
+
+  std::printf("{\n");
+  std::printf("  \"records\": %llu,\n", u(stats.records));
+  std::printf("  \"kalshi_messages\": %llu,\n", u(stats.kalshi_messages));
+  std::printf("  \"polymarket_messages\": %llu,\n",
+              u(stats.polymarket_messages));
+  std::printf("  \"deltas\": %llu,\n", u(stats.deltas));
+  std::printf("  \"unmapped_deltas\": %llu,\n", u(stats.unmapped_deltas));
+  std::printf("  \"ignored\": %llu,\n", u(stats.ignored));
+  std::printf("  \"malformed\": %llu,\n", u(stats.malformed));
+  std::printf("  \"malformed_lines\": %llu,\n", u(stats.malformed_lines));
+  std::printf("  \"gaps\": %llu,\n", u(stats.gaps));
+  std::printf("  \"hashes\": {\"verified\": %llu, \"mismatched\": %llu, "
+              "\"unverifiable\": %llu},\n",
+              u(stats.hashes_verified), u(stats.hashes_mismatched),
+              u(stats.hashes_unverifiable));
+  std::printf("  \"latency_us\": {\"p50\": %.3f, \"p90\": %.3f, "
+              "\"p99\": %.3f, \"max\": %.3f},\n",
+              static_cast<double>(stats.latency.p50_ns) / 1e3,
+              static_cast<double>(stats.latency.p90_ns) / 1e3,
+              static_cast<double>(stats.latency.p99_ns) / 1e3,
+              static_cast<double>(stats.latency.max_ns) / 1e3);
+  std::printf("  \"pipeline\": {\"ms\": %.3f, \"records_per_sec\": %.1f},\n",
+              static_cast<double>(stats.pipeline_ns) / 1e6, rps);
+  if (parse_per_msg >= 0.0) {
+    std::printf("  \"alloc\": {\"parse_per_msg\": %.4f, "
+                "\"parse_bytes_per_msg\": %.1f, \"book_per_msg\": %.4f},\n",
+                parse_per_msg, parse_bytes_per_msg, book_per_msg);
+  }
+  std::printf("  \"events\": [");
+  for (std::size_t i = 0; i < stats.events.size(); ++i) {
+    const auto& e = stats.events[i];
+    const auto& ll = e.lead_lag;
+    const auto& es = e.event_study;
+    std::printf("%s\n    {\"event_id\": \"%s\", \"basis_samples\": %llu, "
+                "\"basis_mean\": %.4f, \"basis_last\": %.4f, "
+                "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
+                "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
+                "\"ci_high_seconds\": %.4f, \"resamples\": %llu}, "
+                "\"event_study\": {\"moves\": %llu, \"followed\": %llu, "
+                "\"median_follow_seconds\": %.4f}}",
+                i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
+                e.basis_mean, e.basis_last,
+                ll.lead_seconds, ll.correlation, u(ll.samples),
+                ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
+                u(es.moves), u(es.followed), es.median_follow_seconds);
+  }
+  std::printf("%s]\n}\n", stats.events.empty() ? "" : "\n  ");
 }
 
 void print_stats(const basis::bench::ReplayStats& stats) {
@@ -253,6 +318,7 @@ int run_replay(const std::vector<std::string_view>& args) {
       flag_string(args, "--config", "configs/synthetic.toml");
   const auto alloc_mode = flag_string(args, "--alloc", "heap");
   const bool breakdown = has_flag(args, "--breakdown");
+  const bool as_json = has_flag(args, "--json");
 
   std::string error;
   const auto registry =
@@ -297,6 +363,23 @@ int run_replay(const std::vector<std::string_view>& args) {
   if (!stats) {
     basis::log::error(error);
     return 1;
+  }
+
+  // JSON mode prints one machine-readable object and nothing else, so a
+  // consumer can parse stdout directly. The allocation fields are present
+  // only when they were actually counted.
+  if (as_json) {
+    double parse_per_msg = -1.0;
+    double parse_bytes_per_msg = -1.0;
+    double book_per_msg = -1.0;
+    if (alloc_mode == "count" && stats->records > 0) {
+      const double n = static_cast<double>(stats->records);
+      parse_per_msg = static_cast<double>(counting_arena.counts().allocations()) / n;
+      parse_bytes_per_msg = static_cast<double>(counting_arena.counts().bytes()) / n;
+      book_per_msg = static_cast<double>(counting_books.allocations()) / n;
+    }
+    print_stats_json(*stats, parse_per_msg, parse_bytes_per_msg, book_per_msg);
+    return 0;
   }
 
   std::printf("replayed %s against %s (alloc %s)\n\n", in_path.c_str(),

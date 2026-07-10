@@ -32,22 +32,24 @@ trap 'rm -rf "$workdir"' EXIT
 "$BIN" synth "$workdir/gate.feedlog" --steps "$STEPS" --lead-ms 400 \
     > /dev/null
 report=$("$BIN" replay "$workdir/gate.feedlog" \
-    --config configs/synthetic.toml --alloc count)
+    --config configs/synthetic.toml --alloc count --json)
 printf '%s\n\n' "$report"
 
-lead=$(printf '%s' "$report" | sed -n 's/.*kalshi leads by \([0-9.]*\)s.*/\1/p')
-corr=$(printf '%s' "$report" | sed -n 's/.*corr \([0-9.]*\).*/\1/p')
-krps=$(printf '%s' "$report" | sed -n 's/.*(\([0-9]*\)k records\/sec).*/\1/p')
-parse_per_msg=$(printf '%s' "$report" \
-    | sed -n 's/.*parse [0-9]* (\([0-9.]*\)\/msg.*/\1/p')
-books_per_msg=$(printf '%s' "$report" \
-    | sed -n 's/.*books [0-9]* (\([0-9.]*\)\/msg).*/\1/p')
-malformed=$(printf '%s' "$report" \
-    | sed -n 's/.*dropped[^0-9]*\([0-9]*\) malformed.*/\1/p')
-bad_lines=$(printf '%s' "$report" \
-    | sed -n 's/.*malformed msgs, \([0-9]*\) bad lines.*/\1/p')
-gaps=$(printf '%s' "$report" \
-    | sed -n 's/.*bad lines, \([0-9]*\) gaps.*/\1/p')
+# Pull the gated fields out of the structured output, so a change to the
+# human report format cannot silently break the gate. python3 is present
+# on every CI runner; no jq dependency.
+read -r lead corr krps parse_per_msg books_per_msg malformed bad_lines gaps \
+    <<EOF
+$(printf '%s' "$report" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+e = d["events"][0]["lead_lag"]
+print(e["lead_seconds"], e["correlation"],
+      d["pipeline"]["records_per_sec"] / 1000.0,
+      d["alloc"]["parse_per_msg"], d["alloc"]["book_per_msg"],
+      d["malformed"], d["malformed_lines"], d["gaps"])
+')
+EOF
 
 failures=0
 check() {
