@@ -52,7 +52,10 @@ int best_lag_in_range(const std::vector<double>& x,
                       const std::vector<double>& y, int lo, int hi,
                       double* peak = nullptr) {
   double best_corr = 0.0;
-  int best = 0;
+  // Default to a lag inside [lo, hi] (0 when the window straddles it, as
+  // the full scan's does). A bootstrap window that excludes 0 must not
+  // fall back to 0 and drag the interval toward a lead of zero.
+  int best = std::clamp(0, lo, hi);
   for (int lag = lo; lag <= hi; ++lag) {
     const double corr = lagged_correlation(x, y, lag);
     if (corr > best_corr) {
@@ -75,6 +78,10 @@ LeadLagResult CrossCorrelationEstimator::estimate() const {
   LeadLagResult result;
   result.samples = samples_.size();
   if (samples_.size() < 2) return result;
+  // grid_ns is a public config knob and divides the span below; a zero or
+  // negative grid has no meaning and zero would be a hard division fault
+  // (silently wrong on arm64, SIGFPE on x86), so refuse it.
+  if (config_.grid_ns <= 0) return result;
 
   // Timestamps come from the feedlog, so they can be garbage. Check the
   // span in floating point first: the int64 subtraction below would be

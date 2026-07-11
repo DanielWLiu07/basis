@@ -156,6 +156,16 @@ TEST(CrossCorrelationEstimator, GarbageTimestampsAreSafe) {
   EXPECT_DOUBLE_EQ(result.lead_seconds, 0.0);
 }
 
+TEST(CrossCorrelationEstimator, ZeroGridIsSafe) {
+  // grid_ns is a public knob; zero would be a hard division fault.
+  CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 0});
+  est.observe(50.0, 45.0, 0);
+  est.observe(51.0, 46.0, 1'000'000'000);
+  const auto result = est.estimate();
+  EXPECT_DOUBLE_EQ(result.correlation, 0.0);
+  EXPECT_DOUBLE_EQ(result.lead_seconds, 0.0);
+}
+
 TEST(CrossCorrelationEstimator, TooFewSamplesIsSafe) {
   CrossCorrelationEstimator est;
   EXPECT_DOUBLE_EQ(est.estimate().correlation, 0.0);

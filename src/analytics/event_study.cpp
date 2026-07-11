@@ -66,7 +66,11 @@ void scan(const std::vector<double>& leader, const std::vector<double>& other,
   *followed_out = follows.size();
   if (!follows.empty()) {
     std::sort(follows.begin(), follows.end());
-    *median_out = follows[follows.size() / 2];
+    const std::size_t n = follows.size();
+    // True median: average the two central values for an even count, not
+    // just the upper-middle element (which biases the figure high).
+    *median_out = (n % 2 == 1) ? follows[n / 2]
+                               : (follows[n / 2 - 1] + follows[n / 2]) / 2.0;
   }
 }
 

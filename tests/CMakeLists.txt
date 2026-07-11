@@ -9,6 +9,7 @@ add_executable(basis_tests
   test_contract_registry.cpp
   test_normalizer.cpp
   test_divergence.cpp
+  test_rng.cpp
   test_event_study.cpp
   test_lead_lag.cpp
   test_session.cpp
