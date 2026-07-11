@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -46,10 +47,10 @@ class PolymarketFeed final : public FeedAdapter {
   std::uint64_t messages() const { return client_.messages(); }
   std::uint64_t bytes() const { return client_.bytes(); }
   std::uint64_t reconnects() const { return client_.reconnects(); }
-  std::uint64_t malformed() const { return malformed_; }
-  std::uint64_t deltas() const { return deltas_; }
-  std::uint64_t hashes_verified() const { return hashes_verified_; }
-  std::uint64_t hashes_mismatched() const { return hashes_mismatched_; }
+  std::uint64_t malformed() const { return malformed_.load(); }
+  std::uint64_t deltas() const { return deltas_.load(); }
+  std::uint64_t hashes_verified() const { return hashes_verified_.load(); }
+  std::uint64_t hashes_mismatched() const { return hashes_mismatched_.load(); }
 
  private:
   std::string subscribe_message() const;
@@ -60,10 +61,12 @@ class PolymarketFeed final : public FeedAdapter {
   PolymarketParser parser_;
   DeltaSink sink_;
   RawTap raw_tap_;
-  std::uint64_t malformed_ = 0;          // IO-thread only
-  std::uint64_t deltas_ = 0;             // IO-thread only
-  std::uint64_t hashes_verified_ = 0;    // IO-thread only
-  std::uint64_t hashes_mismatched_ = 0;  // IO-thread only
+  // Written on the IO thread, read from the main thread's progress report,
+  // so atomic: a plain read/write pair across threads is a data race.
+  std::atomic<std::uint64_t> malformed_{0};
+  std::atomic<std::uint64_t> deltas_{0};
+  std::atomic<std::uint64_t> hashes_verified_{0};
+  std::atomic<std::uint64_t> hashes_mismatched_{0};
 };
 
 }  // namespace basis::feed
