@@ -107,6 +107,28 @@ TEST(PolymarketParser, TinyFractionalSizeDoesNotVanish) {
   EXPECT_EQ(r.deltas[0].size, 1);
 }
 
+TEST(PolymarketParser, DigitlessAndTrailingGarbagePricesAreMalformed) {
+  PolymarketParser p;
+  // A field with a decimal point but no digit ("." ) must not slip through
+  // as a phantom level at price 0.
+  EXPECT_EQ(p.parse(R"({"event_type":"book","asset_id":"t",)"
+                    R"("bids":[{"price":".","size":"5"}]})", 0)
+                .status,
+            ParseStatus::Malformed);
+  // Trailing garbage after the last significant digit is corruption, not a
+  // truncatable price.
+  EXPECT_EQ(p.parse(R"({"event_type":"book","asset_id":"t",)"
+                    R"("bids":[{"price":"0.505junk","size":"5"}]})", 0)
+                .status,
+            ParseStatus::Malformed);
+  // Legitimate spellings of zero and plain values still parse.
+  EXPECT_EQ(p.parse(R"({"event_type":"book","asset_id":"t",)"
+                    R"("bids":[{"price":"0.","size":"5"}],)"
+                    R"("asks":[{"price":"0.47","size":"5"}]})", 0)
+                .status,
+            ParseStatus::Ok);
+}
+
 TEST(PolymarketParser, HugeOrOutOfRangeNumbersAreMalformedNotUB) {
   PolymarketParser p;
   // Digit-cap: this would overflow int64 accumulation.

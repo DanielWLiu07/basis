@@ -33,22 +33,32 @@ std::optional<std::int64_t> parse_scaled_decimal(std::string_view s,
     value = value * 10 + (s[i] - '0');
   }
   value *= scale;
-  if (i == s.size()) return value;  // no fractional part
-  ++i;                              // skip '.'
+  if (i == s.size()) {
+    // A field with no digit at all ("." or "") is malformed, not zero;
+    // accepting it would fabricate a level at price 0.
+    return digits > 0 ? std::optional<std::int64_t>(value) : std::nullopt;
+  }
+  ++i;  // skip '.'
   std::int64_t frac_scale = scale;
+  int frac_digits = 0;
+  bool rounded = false;
   for (; i < s.size(); ++i) {
+    // Every remaining byte must be a digit: trailing garbage after the
+    // last significant place ("0.505junk") is malformed, not truncatable.
     if (s[i] < '0' || s[i] > '9') return std::nullopt;
+    ++frac_digits;
     const int digit = s[i] - '0';
     if (frac_scale >= 10) {
       frac_scale /= 10;
       value += digit * frac_scale;
-    } else {
-      // First digit past the kept precision decides rounding; the rest
-      // cannot change it for the half-up rule we want here.
+    } else if (!rounded) {
+      // First digit past the kept precision decides half-up rounding once;
+      // further digits are validated above but cannot change the result.
       if (digit >= 5) ++value;
-      break;
+      rounded = true;
     }
   }
+  if (digits == 0 && frac_digits == 0) return std::nullopt;  // bare "."
   return value;
 }
 
