@@ -155,13 +155,15 @@ src/alloc/      Bloomberg bdlma arenas behind a std::pmr seam
 tests/          GoogleTest unit and integration tests
 configs/        contract registries (real + synthetic)
 docs/           design notes, venue API notes, benchmark artifacts
-scripts/        CI performance gate, README figure generator
+scripts/        CI performance gate, benchmark runner, README figure generator
 ```
 
 ## Numbers
 
 Filled in only from committed benchmarks, never aspirational (the same rule the
-companion voxel-engine project follows). Recorded so far:
+companion voxel-engine project follows). `scripts/bench.sh` regenerates the
+summary below from the committed capture artifacts through `replay --json`, so
+every figure traces to one command. Recorded so far:
 
 - `docs/bench/latency.md`: on a committed 30-minute live capture (34,731
   messages, 266,597 deltas, zero loss), ingest-to-signal latency is
