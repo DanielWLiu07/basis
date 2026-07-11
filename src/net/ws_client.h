@@ -38,8 +38,13 @@ struct WsConfig {
 // Threading contract: on_connect and on_message run on the IO thread.
 // send() is only valid from inside on_connect or on_message: both run on
 // the IO thread with no read outstanding, so a synchronous write cannot
-// race the read loop. stop() is safe from any thread and joins the IO
-// thread.
+// race the read loop. stop() must be called from a single controlling
+// thread (typically the one that called start), not concurrently with
+// itself; it joins the IO thread. stop() interrupts a blocked read
+// promptly, but a connection still being established (a slow or dead
+// endpoint mid-connect) is only torn down once that attempt returns or
+// times out; cancelling a synchronous connect safely would require the
+// async-with-deadline path, which this client does not use.
 class WsClient {
  public:
   using MessageHandler =
