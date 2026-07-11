@@ -36,7 +36,9 @@ bool append_snapshot_side(const element& msg, const char* key,
     if (level.get_array().get(pair) != SUCCESS ||
         pair.at(0).get_int64().get(price) != SUCCESS ||
         pair.at(1).get_int64().get(size) != SUCCESS ||
-        !valid_wire_price(price)) {
+        !valid_wire_price(price) || size < 0) {
+      // A resting snapshot quantity is never negative; rejecting it keeps
+      // the wire-validation story covering size, not just price.
       return false;
     }
     model::BookDelta d = base;
