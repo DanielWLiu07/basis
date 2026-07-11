@@ -87,6 +87,23 @@ TEST(EventStudyEstimator, UnansweredMovesExpireInsteadOfMatchingLate) {
   EXPECT_EQ(result.followed, 0u);
 }
 
+TEST(EventStudyEstimator, EvenFollowCountUsesTheAverageOfTheTwoMiddles) {
+  // Two followed moves with delays 400 ms and 800 ms: the median is their
+  // average (600 ms), not the upper one.
+  EventStudyEstimator est(
+      EventStudyConfig{.move_cents = 1.0, .follow_window_ns = 5'000 * kMs});
+  // Move A at t=0, followed at t=400ms.
+  est.observe(50.0, 50.0, 0);
+  est.observe(52.0, 50.0, 100 * kMs);
+  est.observe(52.0, 52.0, 500 * kMs);       // follow of A, 400 ms
+  // Move B at t=1s, followed at t=1.8s.
+  est.observe(54.0, 52.0, 1'000 * kMs);
+  est.observe(54.0, 54.0, 1'800 * kMs);     // follow of B, 800 ms
+  const auto r = est.estimate();
+  EXPECT_EQ(r.followed, 2u);
+  EXPECT_NEAR(r.median_follow_seconds, 0.6, 1e-9);
+}
+
 TEST(EventStudyEstimator, TooFewSamplesIsSafe) {
   EventStudyEstimator est;
   EXPECT_EQ(est.estimate().moves, 0u);

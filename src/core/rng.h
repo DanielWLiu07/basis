@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <random>
 
 namespace basis::rng {
@@ -26,11 +27,10 @@ inline double normal(std::mt19937& rng, double mean, double stddev) {
          stddev * std::sqrt(-2.0 * std::log(1.0 - u1)) * std::cos(kTwoPi * u2);
 }
 
-// Uniform integer in [lo, hi]. The modulo bias is far below anything the
-// synthetic data could resolve.
+// Uniform integer in [lo, hi], lo <= hi. The modulo bias is far below
+// anything the synthetic data could resolve.
 inline std::int64_t uniform_int(std::mt19937& rng, std::int64_t lo,
                                 std::int64_t hi) {
-  const auto range = static_cast<std::uint64_t>(hi - lo) + 1;
   // Draw into named locals on separate statements: the two rng() calls
   // are unsequenced as operands of |, so combining them inline would let
   // the compiler pick which 32-bit half is drawn first, and this helper
@@ -38,7 +38,16 @@ inline std::int64_t uniform_int(std::mt19937& rng, std::int64_t lo,
   const std::uint64_t high = static_cast<std::uint64_t>(rng());
   const std::uint64_t low = static_cast<std::uint64_t>(rng());
   const std::uint64_t draw = (high << 32) | low;
-  return lo + static_cast<std::int64_t>(draw % range);
+  // Width of [lo, hi] as an unsigned count minus one, computed in unsigned
+  // so hi - lo cannot overflow the signed range. When the interval spans
+  // the whole int64 range this is UINT64_MAX, i.e. every 64-bit value is
+  // in range, so the draw passes through unreduced.
+  const std::uint64_t span =
+      static_cast<std::uint64_t>(hi) - static_cast<std::uint64_t>(lo);
+  if (span == std::numeric_limits<std::uint64_t>::max()) {
+    return static_cast<std::int64_t>(draw);
+  }
+  return lo + static_cast<std::int64_t>(draw % (span + 1));
 }
 
 }  // namespace basis::rng
