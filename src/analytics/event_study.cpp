@@ -12,6 +12,7 @@ struct Move {
   double direction;        // +1 or -1
   double other_at_move;    // the follower's mid when the move happened
   bool followed = false;
+  bool resolved = false;   // followed or expired; timestamps only advance
   std::int64_t follow_ns = 0;
 };
 
@@ -30,20 +31,25 @@ void scan(const std::vector<double>& leader, const std::vector<double>& other,
   std::size_t pending_begin = 0;  // moves before this index are resolved
 
   for (std::size_t i = 0; i < leader.size(); ++i) {
-    // Resolve pending moves against the follower's current mid.
+    // Drop resolved moves off the front so they are never rescanned; with
+    // this the scan does not degrade toward O(moves) per sample when the
+    // oldest pending move is slow to resolve.
+    while (pending_begin < moves.size() && moves[pending_begin].resolved) {
+      ++pending_begin;
+    }
+    // Resolve still-pending moves against the follower's current mid.
     for (std::size_t m = pending_begin; m < moves.size(); ++m) {
       Move& move = moves[m];
-      if (move.followed) continue;
+      if (move.resolved) continue;
       if (ts[i] - move.ts_ns > window_ns) {
-        // Expired unanswered; compact the pending range when possible.
-        if (m == pending_begin) ++pending_begin;
+        move.resolved = true;  // expired unanswered
         continue;
       }
       const double delta = (other[i] - move.other_at_move) * move.direction;
       if (delta >= move_cents) {
         move.followed = true;
+        move.resolved = true;
         move.follow_ns = ts[i] - move.ts_ns;
-        if (m == pending_begin) ++pending_begin;
       }
     }
 
