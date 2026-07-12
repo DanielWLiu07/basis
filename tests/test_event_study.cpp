@@ -87,6 +87,16 @@ TEST(EventStudyEstimator, UnansweredMovesExpireInsteadOfMatchingLate) {
   EXPECT_EQ(result.followed, 0u);
 }
 
+TEST(EventStudyEstimator, ManyMovesAllResolveCorrectly) {
+  // A long run exercises the front-advancing resolution loop: every move
+  // must be counted and followed exactly once, no drops or double counts.
+  const auto est = make_stepped(200, 400);
+  const auto r = est.estimate();
+  EXPECT_EQ(r.moves, 200u);
+  EXPECT_EQ(r.followed, 200u);
+  EXPECT_NEAR(r.median_follow_seconds, 0.4, 0.11);
+}
+
 TEST(EventStudyEstimator, EvenFollowCountUsesTheAverageOfTheTwoMiddles) {
   // Two followed moves with delays 400 ms and 800 ms: the median is their
   // average (600 ms), not the upper one.
