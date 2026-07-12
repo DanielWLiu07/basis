@@ -68,6 +68,12 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
   while (const auto record = reader.next()) {
     ++stats_.records;
 
+    // Track the wall-clock span the capture covers (receive timestamps),
+    // which gives the venue's real ingest rate, distinct from how fast the
+    // engine replays. Timestamps are non-decreasing in a real capture.
+    if (stats_.records == 1) stats_.first_recv_ns = record->recv_ns;
+    stats_.last_recv_ns = record->recv_ns;
+
     // The measured span: raw bytes in, analytics observed and updates
     // published out. This is the ingest-to-signal latency PLAN.md defines;
     // the feedlog read stays outside it, standing in for the network.
