@@ -41,6 +41,12 @@ struct ReplayStats {
   LatencyRecorder::Report latency;  // per-record ingest-to-signal
   std::int64_t pipeline_ns = 0;     // sum of measured spans, excludes file io
 
+  // Wall-clock span the capture covers, from receive timestamps. The
+  // ingest rate (records over this span) is the venue's real message rate,
+  // not the engine's replay throughput.
+  std::int64_t first_recv_ns = 0;
+  std::int64_t last_recv_ns = 0;
+
   // Per-stage totals, populated only in breakdown mode (set_breakdown).
   // The split is parse (venue JSON to canonical deltas) vs downstream
   // (normalize, book apply, analytics, publish). Zero when off.

@@ -27,9 +27,11 @@ label = sys.argv[1]
 d = json.load(sys.stdin)
 lat = d["latency_us"]
 loss = d["malformed"] + d["malformed_lines"] + d["gaps"]
-print("{:<14} {:>8} msgs  {:>9} deltas  p50 {:.1f}us  p99 {:.1f}us  "
-      "{:.0f}k rec/s  hashes {}ok/{}bad  loss {}".format(
-          label, d["records"], d["deltas"], lat["p50"], lat["p99"],
+span_min = d["session"]["span_seconds"] / 60.0
+print("{:<14} {:>8} msgs over {:>5.0f} min  {:>9} deltas  "
+      "p50 {:.1f}us  p99 {:.1f}us  {:.0f}k rec/s  "
+      "hashes {}ok/{}bad  loss {}".format(
+          label, d["records"], span_min, d["deltas"], lat["p50"], lat["p99"],
           d["pipeline"]["records_per_sec"] / 1000.0,
           d["hashes"]["verified"], d["hashes"]["mismatched"], loss))
 PY

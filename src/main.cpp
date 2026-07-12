@@ -186,6 +186,12 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
               static_cast<double>(stats.latency.max_ns) / 1e3);
   std::printf("  \"pipeline\": {\"ms\": %.3f, \"records_per_sec\": %.1f},\n",
               static_cast<double>(stats.pipeline_ns) / 1e6, rps);
+  const double span_s =
+      static_cast<double>(stats.last_recv_ns - stats.first_recv_ns) / 1e9;
+  std::printf("  \"session\": {\"span_seconds\": %.3f, \"ingest_per_sec\": "
+              "%.1f},\n",
+              span_s > 0.0 ? span_s : 0.0,
+              span_s > 0.0 ? static_cast<double>(stats.records) / span_s : 0.0);
   if (parse_per_msg >= 0.0) {
     std::printf("  \"alloc\": {\"parse_per_msg\": %.4f, "
                 "\"parse_bytes_per_msg\": %.1f, \"book_per_msg\": %.4f},\n",
@@ -218,6 +224,12 @@ void print_stats(const basis::bench::ReplayStats& stats) {
               static_cast<unsigned long long>(stats.records),
               static_cast<unsigned long long>(stats.kalshi_messages),
               static_cast<unsigned long long>(stats.polymarket_messages));
+  const double span_s =
+      static_cast<double>(stats.last_recv_ns - stats.first_recv_ns) / 1e9;
+  if (span_s > 0.0) {
+    std::printf("session   %.1f s span, %.0f msgs/sec ingest\n", span_s,
+                static_cast<double>(stats.records) / span_s);
+  }
   std::printf("deltas    %llu applied, %llu unmapped\n",
               static_cast<unsigned long long>(stats.deltas),
               static_cast<unsigned long long>(stats.unmapped_deltas));
