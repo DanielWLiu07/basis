@@ -17,6 +17,18 @@ struct LeadLagResult {
   double        ci_low_seconds  = 0.0;
   double        ci_high_seconds = 0.0;
   std::uint64_t resamples       = 0;
+
+  // The lead is statistically resolved when the 95 percent interval sits
+  // entirely on one side of zero: the sign of the lead (which venue leads)
+  // is confident, not an artifact of the peak landing slightly off center.
+  // An interval straddling zero means the data cannot tell which venue
+  // leads, however large the point estimate looks. Only meaningful once the
+  // bootstrap has run (resamples > 0); otherwise there is no interval.
+  bool lead_is_significant() const {
+    return resamples > 0 &&
+           ((ci_low_seconds > 0.0 && ci_high_seconds > 0.0) ||
+            (ci_low_seconds < 0.0 && ci_high_seconds < 0.0));
+  }
 };
 
 // Estimates which venue's price moves first for a matched event, by

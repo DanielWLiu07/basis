@@ -80,6 +80,51 @@ TEST(CrossCorrelationEstimator, BootstrapIntervalContainsTheTrueLead) {
   EXPECT_LE(result.ci_high_seconds, 0.6);
 }
 
+TEST(CrossCorrelationEstimator, CleanLeadIsSignificant) {
+  // A clean 300 ms lead collapses the bootstrap interval onto one side of
+  // zero, so the direction of the lead is resolved.
+  const auto pair = make_pair(2000, 3);
+  CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,
+                                              .max_lag_bins = 20});
+  for (std::size_t i = 0; i < pair.a.size(); ++i) {
+    est.observe(pair.a[i], pair.b[i],
+                static_cast<std::int64_t>(i) * 100 * kMs);
+  }
+  const auto result = est.estimate();
+  EXPECT_GT(result.resamples, 0u);
+  EXPECT_TRUE(result.lead_is_significant());
+}
+
+TEST(CrossCorrelationEstimator, SimultaneousSeriesIsNotSignificant) {
+  // Identical series lead by zero: the interval sits on zero and cannot pick
+  // a leader, so despite a full bootstrap the lead is not significant.
+  const auto pair = make_pair(2000, 0);
+  CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,
+                                              .max_lag_bins = 20});
+  for (std::size_t i = 0; i < pair.a.size(); ++i) {
+    est.observe(pair.a[i], pair.b[i],
+                static_cast<std::int64_t>(i) * 100 * kMs);
+  }
+  const auto result = est.estimate();
+  EXPECT_GT(result.resamples, 0u);
+  EXPECT_FALSE(result.lead_is_significant());
+}
+
+TEST(CrossCorrelationEstimator, NoBootstrapIsNeverSignificant) {
+  // Without an interval (resamples == 0) there is nothing to test against
+  // zero, so significance must not be claimed regardless of the point lead.
+  const auto pair = make_pair(20, 3);
+  CrossCorrelationEstimator est(LeadLagConfig{.grid_ns = 100 * kMs,
+                                              .max_lag_bins = 20});
+  for (std::size_t i = 0; i < pair.a.size(); ++i) {
+    est.observe(pair.a[i], pair.b[i],
+                static_cast<std::int64_t>(i) * 100 * kMs);
+  }
+  const auto result = est.estimate();
+  EXPECT_EQ(result.resamples, 0u);
+  EXPECT_FALSE(result.lead_is_significant());
+}
+
 TEST(CrossCorrelationEstimator, BootstrapIsDeterministic) {
   const auto pair = make_pair(1000, 3);
   const auto run = [&] {

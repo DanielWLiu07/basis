@@ -208,13 +208,15 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"basis_last\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
-                "\"ci_high_seconds\": %.4f, \"resamples\": %llu}, "
+                "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
+                "\"significant\": %s}, "
                 "\"event_study\": {\"moves\": %llu, \"followed\": %llu, "
                 "\"median_follow_seconds\": %.4f}}",
                 i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
                 e.basis_mean, e.basis_stddev, e.basis_zscore, e.basis_last,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
+                ll.lead_is_significant() ? "true" : "false",
                 u(es.moves), u(es.followed), es.median_follow_seconds);
   }
   std::printf("%s]\n}\n", stats.events.empty() ? "" : "\n  ");
@@ -290,9 +292,12 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   static_cast<unsigned long long>(ll.samples));
       if (ll.resamples > 0) {
         std::printf("           95%% ci %.3fs..%.3fs "
-                    "(%llu block-bootstrap resamples)\n",
+                    "(%llu block-bootstrap resamples) -- %s\n",
                     ll.ci_low_seconds, ll.ci_high_seconds,
-                    static_cast<unsigned long long>(ll.resamples));
+                    static_cast<unsigned long long>(ll.resamples),
+                    ll.lead_is_significant()
+                        ? "significant (interval excludes zero)"
+                        : "not significant (interval spans zero)");
       }
     }
     const auto& es = event.event_study;
