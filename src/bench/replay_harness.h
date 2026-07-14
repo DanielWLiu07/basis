@@ -58,6 +58,7 @@ struct ReplayStats {
     std::uint64_t basis_samples = 0;
     double basis_mean = 0.0;
     double basis_stddev = 0.0;
+    double basis_zscore = 0.0;  // last basis in stddevs from the mean
     double basis_min = 0.0;
     double basis_max = 0.0;
     double basis_last = 0.0;

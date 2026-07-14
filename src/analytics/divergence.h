@@ -34,6 +34,14 @@ class DivergenceTracker {
     return std::sqrt(m2_ / static_cast<double>(samples_ - 1));
   }
 
+  // How many standard deviations the latest observation sits from the
+  // running mean: a quick read on whether the basis is currently at a
+  // typical or an unusual level. Zero when the spread is undefined.
+  double zscore() const {
+    const double sd = stddev();
+    return sd > 0.0 ? (last_ - mean_) / sd : 0.0;
+  }
+
  private:
   std::uint64_t samples_ = 0;
   double last_ = 0.0;
