@@ -138,6 +138,7 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     if (report.basis_samples > 0) {
       report.basis_mean = ea.divergence.mean();
       report.basis_stddev = ea.divergence.stddev();
+      report.basis_zscore = ea.divergence.zscore();
       report.basis_min = ea.divergence.min();
       report.basis_max = ea.divergence.max();
       report.basis_last = ea.divergence.last();

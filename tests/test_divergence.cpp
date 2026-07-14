@@ -34,6 +34,22 @@ TEST(DivergenceTracker, StddevIsZeroForAConstantSeries) {
   for (int i = 0; i < 1000; ++i) t.observe(2.5);
   EXPECT_DOUBLE_EQ(t.mean(), 2.5);
   EXPECT_NEAR(t.stddev(), 0.0, 1e-12);
+  // No spread, so no defined z-score.
+  EXPECT_DOUBLE_EQ(t.zscore(), 0.0);
+}
+
+TEST(DivergenceTracker, ZscoreMeasuresTheLastInStddevs) {
+  // {3, -1, 2}: mean 4/3, sd sqrt(13/3); last = 2, so z = (2 - 4/3)/sd.
+  DivergenceTracker t;
+  t.observe(3.0);
+  t.observe(-1.0);
+  t.observe(2.0);
+  const double expected = (2.0 - 4.0 / 3.0) / std::sqrt(13.0 / 3.0);
+  EXPECT_NEAR(t.zscore(), expected, 1e-12);
+  // Undefined below two samples.
+  DivergenceTracker one;
+  one.observe(5.0);
+  EXPECT_DOUBLE_EQ(one.zscore(), 0.0);
 }
 
 TEST(DivergenceTracker, NegativeOnlyBasisKeepsSignedExtremes) {
