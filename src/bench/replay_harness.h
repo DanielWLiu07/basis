@@ -62,6 +62,8 @@ struct ReplayStats {
     double basis_min = 0.0;
     double basis_max = 0.0;
     double basis_last = 0.0;
+    double basis_ar1 = 0.0;             // AR(1) coefficient of the basis
+    double basis_halflife_updates = 0.0;  // 0 when not mean-reverting
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };

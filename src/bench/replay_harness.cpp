@@ -142,6 +142,8 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.basis_min = ea.divergence.min();
       report.basis_max = ea.divergence.max();
       report.basis_last = ea.divergence.last();
+      report.basis_ar1 = ea.divergence.ar1_coefficient();
+      report.basis_halflife_updates = ea.divergence.reversion_halflife_updates();
     }
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();
