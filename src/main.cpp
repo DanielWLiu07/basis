@@ -206,6 +206,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"basis_mean\": %.4f, \"basis_stddev\": %.4f, "
                 "\"basis_zscore\": %.4f, "
                 "\"basis_last\": %.4f, "
+                "\"basis_ar1\": %.4f, "
+                "\"basis_halflife_updates\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -214,6 +216,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"median_follow_seconds\": %.4f}}",
                 i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
                 e.basis_mean, e.basis_stddev, e.basis_zscore, e.basis_last,
+                e.basis_ar1, e.basis_halflife_updates,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -278,6 +281,16 @@ void print_stats(const basis::bench::ReplayStats& stats) {
       // currently at a typical or an unusual level.
       std::printf("           last is %+.1f sd from the session mean\n",
                   event.basis_zscore);
+    }
+    // AR(1) mean reversion: how sticky the basis is and, when it reverts,
+    // how many updates it takes to close half the gap back to the mean.
+    if (event.basis_halflife_updates > 0.0) {
+      std::printf("           mean-reverting (ar1 %.3f), half-life %.1f "
+                  "updates\n",
+                  event.basis_ar1, event.basis_halflife_updates);
+    } else if (event.basis_samples >= 3) {
+      std::printf("           not mean-reverting (ar1 %.3f)\n",
+                  event.basis_ar1);
     }
     const auto& ll = event.lead_lag;
     if (ll.correlation <= 0.0) {
