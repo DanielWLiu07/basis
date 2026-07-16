@@ -12,6 +12,7 @@ add_executable(basis_tests
   test_rng.cpp
   test_event_study.cpp
   test_lead_lag.cpp
+  test_consensus.cpp
   test_session.cpp
   test_latency_recorder.cpp
   test_replay_harness.cpp

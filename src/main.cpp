@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "analytics/consensus.h"
 #include "bench/replay_harness.h"
 #include "bench/synth_generator.h"
 #include "core/counting_resource.h"
@@ -202,6 +203,11 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
     const auto& e = stats.events[i];
     const auto& ll = e.lead_lag;
     const auto& es = e.event_study;
+    const auto consensus = basis::analytics::lead_consensus(ll, es);
+    const char* consensus_leader =
+        consensus.leader() == basis::analytics::Leader::A   ? "kalshi"
+        : consensus.leader() == basis::analytics::Leader::B ? "polymarket"
+                                                            : "none";
     std::printf("%s\n    {\"event_id\": \"%s\", \"basis_samples\": %llu, "
                 "\"basis_mean\": %.4f, \"basis_stddev\": %.4f, "
                 "\"basis_zscore\": %.4f, "
@@ -214,7 +220,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"significant\": %s}, "
                 "\"event_study\": {\"moves\": %llu, \"followed\": %llu, "
                 "\"median_follow_seconds\": %.4f, \"follow_rate_z\": %.4f, "
-                "\"lead_confirmed\": %s}}",
+                "\"lead_confirmed\": %s}, "
+                "\"consensus_leader\": \"%s\", \"methods_agree\": %s}",
                 i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
                 e.basis_mean, e.basis_stddev, e.basis_zscore, e.basis_last,
                 e.basis_ar1, e.basis_halflife_updates,
@@ -222,7 +229,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
                 u(es.moves), u(es.followed), es.median_follow_seconds,
-                es.follow_rate_z(), es.lead_confirmed() ? "true" : "false");
+                es.follow_rate_z(), es.lead_confirmed() ? "true" : "false",
+                consensus_leader, consensus.agree() ? "true" : "false");
   }
   std::printf("%s]\n}\n", stats.events.empty() ? "" : "\n  ");
 }
@@ -337,6 +345,27 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                         ? "confirms a lead"
                         : "no confirmed lead");
       }
+    }
+    // The payoff of the two-method design: do cross-correlation and the
+    // event study agree on which venue leads? Agreement is the defensible
+    // finding; a conflict means the apparent lead is method-dependent.
+    const auto consensus =
+        basis::analytics::lead_consensus(ll, es);
+    const auto leader_name = [](basis::analytics::Leader l) {
+      switch (l) {
+        case basis::analytics::Leader::A: return "kalshi";
+        case basis::analytics::Leader::B: return "polymarket";
+        default: return "neither";
+      }
+    };
+    if (consensus.agree()) {
+      std::printf("  consensus both methods agree: %s leads\n",
+                  leader_name(consensus.leader()));
+    } else if (consensus.conflict()) {
+      std::printf("  consensus methods disagree (cross-corr %s, event study "
+                  "%s) -- no reliable lead\n",
+                  leader_name(consensus.crosscorr),
+                  leader_name(consensus.event_study));
     }
   }
 }

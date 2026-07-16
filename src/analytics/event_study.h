@@ -57,11 +57,22 @@ struct EventStudyResult {
     return se > 0.0 ? (p1 - p2) / se : 0.0;
   }
 
-  // The event study confirms a lead when the forward follow rate beats the
-  // reverse beyond chance (one-sided ~2.5%: z >= 1.96). This is the point of
-  // the cross-check -- an independent method agreeing with the
-  // cross-correlation lead, not a restatement of it.
-  bool lead_confirmed() const { return follow_rate_z() >= 1.96; }
+  // Which venue the event study confirms leads, from the follow-rate gap:
+  // +1 for A (its moves get answered more), -1 for B, 0 when neither side
+  // clears the bar. A move is "confirmed" past one-sided ~2.5% (|z| >= 1.96).
+  int confirmed_leader() const {
+    const double z = follow_rate_z();
+    if (z >= kConfirmZ) return 1;
+    if (z <= -kConfirmZ) return -1;
+    return 0;
+  }
+
+  // The event study confirms A leads when its moves are answered beyond
+  // chance. This is the point of the cross-check -- an independent method
+  // agreeing with the cross-correlation lead, not a restatement of it.
+  bool lead_confirmed() const { return confirmed_leader() == 1; }
+
+  static constexpr double kConfirmZ = 1.96;  // one-sided ~2.5%
 };
 
 // The cross-check the methodology in PLAN.md calls for: instead of
