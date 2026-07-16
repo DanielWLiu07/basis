@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -22,6 +23,45 @@ struct EventStudyResult {
   std::uint64_t reverse_moves = 0;
   std::uint64_t reverse_followed = 0;
   double reverse_median_follow_seconds = 0.0;
+
+  // Share of each venue's moves the other answered inside the window.
+  double forward_follow_rate() const {
+    return moves > 0 ? static_cast<double>(followed) /
+                           static_cast<double>(moves)
+                     : 0.0;
+  }
+  double reverse_follow_rate() const {
+    return reverse_moves > 0 ? static_cast<double>(reverse_followed) /
+                                   static_cast<double>(reverse_moves)
+                             : 0.0;
+  }
+
+  // Two-proportion z comparing the forward follow rate to the reverse. If A
+  // genuinely leads, its moves get answered far more often than B's late
+  // copies do, so this is large and positive. Zero when either direction saw
+  // no moves (nothing to compare) or the pooled rate is degenerate. This
+  // gives the event study its own significance test rather than leaving the
+  // reader to eyeball the four raw counts.
+  double follow_rate_z() const {
+    if (moves == 0 || reverse_moves == 0) return 0.0;
+    const double n1 = static_cast<double>(moves);
+    const double n2 = static_cast<double>(reverse_moves);
+    const double p1 = static_cast<double>(followed) / n1;
+    const double p2 = static_cast<double>(reverse_followed) / n2;
+    const double pooled =
+        (static_cast<double>(followed) +
+         static_cast<double>(reverse_followed)) /
+        (n1 + n2);
+    const double se =
+        std::sqrt(pooled * (1.0 - pooled) * (1.0 / n1 + 1.0 / n2));
+    return se > 0.0 ? (p1 - p2) / se : 0.0;
+  }
+
+  // The event study confirms a lead when the forward follow rate beats the
+  // reverse beyond chance (one-sided ~2.5%: z >= 1.96). This is the point of
+  // the cross-check -- an independent method agreeing with the
+  // cross-correlation lead, not a restatement of it.
+  bool lead_confirmed() const { return follow_rate_z() >= 1.96; }
 };
 
 // The cross-check the methodology in PLAN.md calls for: instead of
