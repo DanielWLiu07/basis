@@ -213,14 +213,16 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
                 "\"significant\": %s}, "
                 "\"event_study\": {\"moves\": %llu, \"followed\": %llu, "
-                "\"median_follow_seconds\": %.4f}}",
+                "\"median_follow_seconds\": %.4f, \"follow_rate_z\": %.4f, "
+                "\"lead_confirmed\": %s}}",
                 i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
                 e.basis_mean, e.basis_stddev, e.basis_zscore, e.basis_last,
                 e.basis_ar1, e.basis_halflife_updates,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
-                u(es.moves), u(es.followed), es.median_follow_seconds);
+                u(es.moves), u(es.followed), es.median_follow_seconds,
+                es.follow_rate_z(), es.lead_confirmed() ? "true" : "false");
   }
   std::printf("%s]\n}\n", stats.events.empty() ? "" : "\n  ");
 }
@@ -324,6 +326,17 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   static_cast<unsigned long long>(es.reverse_followed),
                   static_cast<unsigned long long>(es.reverse_moves),
                   es.reverse_median_follow_seconds);
+      // Turn the four counts into a verdict: does one venue's moves get
+      // answered significantly more than the other's?
+      if (es.moves > 0 && es.reverse_moves > 0) {
+        std::printf("           follow rate %.0f%% vs %.0f%% reverse "
+                    "(z %+.1f) -- %s\n",
+                    es.forward_follow_rate() * 100.0,
+                    es.reverse_follow_rate() * 100.0, es.follow_rate_z(),
+                    es.lead_confirmed()
+                        ? "confirms a lead"
+                        : "no confirmed lead");
+      }
     }
   }
 }

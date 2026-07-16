@@ -6,6 +6,7 @@
 
 using basis::analytics::EventStudyConfig;
 using basis::analytics::EventStudyEstimator;
+using basis::analytics::EventStudyResult;
 
 namespace {
 
@@ -60,6 +61,51 @@ TEST(EventStudyEstimator, ReverseDirectionShowsTheFollowerIsLate) {
   // few or no matched follows.
   EXPECT_EQ(result.reverse_moves, 10u);
   EXPECT_EQ(result.reverse_followed, 0u);
+}
+
+TEST(EventStudyResultTest, FollowRateAsymmetryConfirmsALead) {
+  // A's moves answered 90%, B's only 30%: a large positive z that clears the
+  // 1.96 bar, so the event study confirms A leads.
+  EventStudyResult r;
+  r.moves = 100;
+  r.followed = 90;
+  r.reverse_moves = 100;
+  r.reverse_followed = 30;
+  EXPECT_DOUBLE_EQ(r.forward_follow_rate(), 0.9);
+  EXPECT_DOUBLE_EQ(r.reverse_follow_rate(), 0.3);
+  EXPECT_GT(r.follow_rate_z(), 1.96);
+  EXPECT_TRUE(r.lead_confirmed());
+}
+
+TEST(EventStudyResultTest, SymmetricFollowRatesConfirmNothing) {
+  // Both venues answered equally often: z is zero, no lead confirmed.
+  EventStudyResult r;
+  r.moves = 100;
+  r.followed = 50;
+  r.reverse_moves = 100;
+  r.reverse_followed = 50;
+  EXPECT_DOUBLE_EQ(r.follow_rate_z(), 0.0);
+  EXPECT_FALSE(r.lead_confirmed());
+}
+
+TEST(EventStudyResultTest, OneSidedOrEmptyIsNotConfirmed) {
+  // No moves in the reverse direction: nothing to compare against, so the
+  // test stays silent rather than reporting a spurious lead.
+  EventStudyResult r;
+  r.moves = 50;
+  r.followed = 40;
+  r.reverse_moves = 0;
+  r.reverse_followed = 0;
+  EXPECT_DOUBLE_EQ(r.follow_rate_z(), 0.0);
+  EXPECT_FALSE(r.lead_confirmed());
+}
+
+TEST(EventStudyEstimator, StrongLeadIsConfirmedEndToEnd) {
+  // The stepped fixture has A's moves all followed and B's none, which the
+  // two-proportion test should flag as a confirmed lead.
+  const auto result = make_stepped(10, 400).estimate();
+  EXPECT_GT(result.follow_rate_z(), 1.96);
+  EXPECT_TRUE(result.lead_confirmed());
 }
 
 TEST(EventStudyEstimator, BookNoiseBelowThresholdIsNotAMove) {
