@@ -86,6 +86,13 @@ TEST(ReplayHarness, RunsThePipelineEndToEnd) {
   EXPECT_GE(event.basis_samples, 2u);
   EXPECT_DOUBLE_EQ(event.basis_last, 48.5 - 45.0);
 
+  // Polymarket stays 44/46 the whole run, so its mean bid-ask spread is
+  // exactly 2 cents; Kalshi's YES bid improves 47 -> 48 against a 49 ask, so
+  // its spread tightens from 2 to 1, leaving a mean in that range.
+  EXPECT_DOUBLE_EQ(event.poly_spread_mean, 2.0);
+  EXPECT_GE(event.kalshi_spread_mean, 1.0);
+  EXPECT_LE(event.kalshi_spread_mean, 2.0);
+
   // The api layer saw the same numbers the analytics did.
   ASSERT_FALSE(basis_updates.empty());
   EXPECT_DOUBLE_EQ(basis_updates.back(), 3.5);

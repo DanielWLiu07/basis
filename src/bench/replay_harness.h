@@ -64,6 +64,12 @@ struct ReplayStats {
     double basis_last = 0.0;
     double basis_ar1 = 0.0;             // AR(1) coefficient of the basis
     double basis_halflife_updates = 0.0;  // 0 when not mean-reverting
+    // Mean bid-ask spread per venue (cents), over updates where that venue
+    // had a two-sided book. -1 means the venue was never two-sided. The basis
+    // is only a tradeable dislocation when it clears these; within them it is
+    // quoting noise.
+    double kalshi_spread_mean = -1.0;
+    double poly_spread_mean = -1.0;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -127,6 +133,10 @@ class ReplayHarness {
 
   struct EventAnalytics {
     analytics::DivergenceTracker divergence;
+    // DivergenceTracker is a generic running-stats accumulator; reused here
+    // to carry the mean/min/max bid-ask spread for each venue.
+    analytics::DivergenceTracker kalshi_spread;
+    analytics::DivergenceTracker poly_spread;
     analytics::CrossCorrelationEstimator lead_lag;
     analytics::EventStudyEstimator event_study;
 
