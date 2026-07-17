@@ -6,7 +6,10 @@
 # then asserts the properties that must not regress:
 #
 #   1. Correctness of the closed loop: the injected 400 ms cross-venue
-#      lead is recovered, with high correlation.
+#      lead is recovered, with high correlation -- and the independent
+#      event-study cross-check plus the two-method consensus agree that
+#      Kalshi leads, so the headline finding is verified end to end, not
+#      just by one method.
 #   2. Integrity accounting: zero malformed messages, zero broken lines,
 #      zero gaps. The synthetic input is clean; anything else is a parser
 #      regression.
@@ -39,15 +42,20 @@ printf '%s\n\n' "$report"
 # human report format cannot silently break the gate. python3 is present
 # on every CI runner; no jq dependency.
 read -r lead corr krps parse_per_msg books_per_msg malformed bad_lines gaps \
+       confirmed follow_z agree consensus_kalshi \
     <<EOF
 $(printf '%s' "$report" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-e = d["events"][0]["lead_lag"]
+ev = d["events"][0]
+e = ev["lead_lag"]
+es = ev["event_study"]
 print(e["lead_seconds"], e["correlation"],
       d["pipeline"]["records_per_sec"] / 1000.0,
       d["alloc"]["parse_per_msg"], d["alloc"]["book_per_msg"],
-      d["malformed"], d["malformed_lines"], d["gaps"])
+      d["malformed"], d["malformed_lines"], d["gaps"],
+      int(es["lead_confirmed"]), es["follow_rate_z"],
+      int(ev["methods_agree"]), int(ev["consensus_leader"] == "kalshi"))
 ')
 EOF
 
@@ -67,6 +75,13 @@ check() {
 
 check "recovered lead (s)"   "$lead"          "v >= 0.395 && v <= 0.405"
 check "lead correlation"     "$corr"          "v >= 0.99"
+# The independent cross-check and the two-method consensus must agree with
+# cross-correlation on the injected lead; if either regresses, the headline
+# finding ("two unrelated methods agree Kalshi leads") is no longer true.
+check "event study confirms" "$confirmed"     "v == 1"
+check "follow-rate z"        "$follow_z"      "v >= 1.96"
+check "methods agree"        "$agree"         "v == 1"
+check "consensus = kalshi"   "$consensus_kalshi" "v == 1"
 check "malformed messages"   "$malformed"     "v == 0"
 check "broken feedlog lines" "$bad_lines"     "v == 0"
 check "sequence gaps"        "$gaps"          "v == 0"
