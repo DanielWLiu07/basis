@@ -93,6 +93,11 @@ TEST(ReplayHarness, RunsThePipelineEndToEnd) {
   EXPECT_GE(event.kalshi_spread_mean, 1.0);
   EXPECT_LE(event.kalshi_spread_mean, 2.0);
 
+  // Kalshi's best bid (47, then 48) sits above Polymarket's best ask (46) for
+  // the whole run, so every two-sided update is a crossable dislocation.
+  EXPECT_GT(event.two_sided_updates, 0u);
+  EXPECT_EQ(event.crossable_updates, event.two_sided_updates);
+
   // The api layer saw the same numbers the analytics did.
   ASSERT_FALSE(basis_updates.empty());
   EXPECT_DOUBLE_EQ(basis_updates.back(), 3.5);

@@ -216,6 +216,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"basis_halflife_updates\": %.4f, "
                 "\"kalshi_spread_mean\": %.4f, "
                 "\"poly_spread_mean\": %.4f, "
+                "\"two_sided_updates\": %llu, "
+                "\"crossable_updates\": %llu, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -228,6 +230,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.basis_mean, e.basis_stddev, e.basis_zscore, e.basis_last,
                 e.basis_ar1, e.basis_halflife_updates,
                 e.kalshi_spread_mean, e.poly_spread_mean,
+                u(e.two_sided_updates), u(e.crossable_updates),
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -316,6 +319,16 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   std::abs(event.basis_mean) > avg_spread
                       ? "basis clears the spread (dislocation)"
                       : "basis within the spread (noise)");
+    }
+    // Crossable dislocations: updates where the books were actually crossed
+    // across venues (best bid > best ask), an arbitrage the mid-based basis
+    // does not by itself reveal.
+    if (event.two_sided_updates > 0) {
+      const double pct = 100.0 * static_cast<double>(event.crossable_updates) /
+                         static_cast<double>(event.two_sided_updates);
+      std::printf("  arb      %llu/%llu two-sided updates crossable (%.2f%%)\n",
+                  static_cast<unsigned long long>(event.crossable_updates),
+                  static_cast<unsigned long long>(event.two_sided_updates), pct);
     }
     const auto& ll = event.lead_lag;
     if (ll.correlation <= 0.0) {
