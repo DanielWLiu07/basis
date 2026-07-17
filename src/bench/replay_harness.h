@@ -70,6 +70,11 @@ struct ReplayStats {
     // quoting noise.
     double kalshi_spread_mean = -1.0;
     double poly_spread_mean = -1.0;
+    // Updates where both venues were two-sided, and how many of those were a
+    // crossable cross-venue dislocation (best bid on one > best ask on the
+    // other): an actual, fees-aside arbitrage between the books.
+    std::uint64_t two_sided_updates = 0;
+    std::uint64_t crossable_updates = 0;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -137,6 +142,8 @@ class ReplayHarness {
     // to carry the mean/min/max bid-ask spread for each venue.
     analytics::DivergenceTracker kalshi_spread;
     analytics::DivergenceTracker poly_spread;
+    std::uint64_t two_sided_updates = 0;
+    std::uint64_t crossable_updates = 0;
     analytics::CrossCorrelationEstimator lead_lag;
     analytics::EventStudyEstimator event_study;
 

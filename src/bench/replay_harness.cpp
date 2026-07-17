@@ -46,11 +46,21 @@ void ReplayHarness::on_event_update(const std::string& event_id,
     if (!bid || !ask) return std::nullopt;
     return static_cast<double>(*ask - *bid);
   };
-  if (const auto s = spread_of(book.book(model::Venue::Kalshi))) {
-    it->second.kalshi_spread.observe(*s);
-  }
-  if (const auto s = spread_of(book.book(model::Venue::Polymarket))) {
-    it->second.poly_spread.observe(*s);
+  const auto& kb = book.book(model::Venue::Kalshi);
+  const auto& pb = book.book(model::Venue::Polymarket);
+  if (const auto s = spread_of(kb)) it->second.kalshi_spread.observe(*s);
+  if (const auto s = spread_of(pb)) it->second.poly_spread.observe(*s);
+
+  // A crossable cross-venue dislocation: one venue's best bid sits above the
+  // other's best ask, so the two markets are crossed and (fees aside) the gap
+  // is capturable -- buy the cheaper ask, sell into the richer bid. This is a
+  // real opportunity, distinct from a mid gap that never clears the spreads.
+  // Count these against all two-sided updates.
+  const auto kbid = kb.best_bid(), kask = kb.best_ask();
+  const auto pbid = pb.best_bid(), pask = pb.best_ask();
+  if (kbid && kask && pbid && pask) {
+    ++it->second.two_sided_updates;
+    if (*kbid > *pask || *pbid > *kask) ++it->second.crossable_updates;
   }
 
   if (!session_) return;
@@ -166,6 +176,8 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     if (ea.poly_spread.samples() > 0) {
       report.poly_spread_mean = ea.poly_spread.mean();
     }
+    report.two_sided_updates = ea.two_sided_updates;
+    report.crossable_updates = ea.crossable_updates;
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();
     stats_.events.push_back(std::move(report));
