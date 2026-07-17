@@ -214,6 +214,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"basis_last\": %.4f, "
                 "\"basis_ar1\": %.4f, "
                 "\"basis_halflife_updates\": %.4f, "
+                "\"kalshi_spread_mean\": %.4f, "
+                "\"poly_spread_mean\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -225,6 +227,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 i == 0 ? "" : ",", e.event_id.c_str(), u(e.basis_samples),
                 e.basis_mean, e.basis_stddev, e.basis_zscore, e.basis_last,
                 e.basis_ar1, e.basis_halflife_updates,
+                e.kalshi_spread_mean, e.poly_spread_mean,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -301,6 +304,18 @@ void print_stats(const basis::bench::ReplayStats& stats) {
     } else if (event.basis_samples >= 3) {
       std::printf("           not mean-reverting (ar1 %.3f)\n",
                   event.basis_ar1);
+    }
+    // Bid-ask spread per venue, and whether the basis actually clears it: a
+    // mid gap smaller than the cost of crossing both books is quoting noise,
+    // not a tradeable dislocation.
+    if (event.kalshi_spread_mean >= 0.0 && event.poly_spread_mean >= 0.0) {
+      const double avg_spread =
+          (event.kalshi_spread_mean + event.poly_spread_mean) / 2.0;
+      std::printf("  spread   kalshi %.2fc  polymarket %.2fc  -- %s\n",
+                  event.kalshi_spread_mean, event.poly_spread_mean,
+                  std::abs(event.basis_mean) > avg_spread
+                      ? "basis clears the spread (dislocation)"
+                      : "basis within the spread (noise)");
     }
     const auto& ll = event.lead_lag;
     if (ll.correlation <= 0.0) {

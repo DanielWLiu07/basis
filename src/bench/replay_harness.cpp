@@ -1,6 +1,7 @@
 #include "bench/replay_harness.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "core/time.h"
 #include "feed/feed_log.h"
@@ -36,6 +37,20 @@ void ReplayHarness::on_event_update(const std::string& event_id,
     it->second.divergence.observe(*kalshi_mid - *poly_mid);
     it->second.lead_lag.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
     it->second.event_study.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
+  }
+  // Track each venue's bid-ask spread whenever it is two-sided, so the basis
+  // can be read against the cost of crossing each book.
+  const auto spread_of = [](const model::OrderBook& b) -> std::optional<double> {
+    const auto bid = b.best_bid();
+    const auto ask = b.best_ask();
+    if (!bid || !ask) return std::nullopt;
+    return static_cast<double>(*ask - *bid);
+  };
+  if (const auto s = spread_of(book.book(model::Venue::Kalshi))) {
+    it->second.kalshi_spread.observe(*s);
+  }
+  if (const auto s = spread_of(book.book(model::Venue::Polymarket))) {
+    it->second.poly_spread.observe(*s);
   }
 
   if (!session_) return;
@@ -144,6 +159,12 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.basis_last = ea.divergence.last();
       report.basis_ar1 = ea.divergence.ar1_coefficient();
       report.basis_halflife_updates = ea.divergence.reversion_halflife_updates();
+    }
+    if (ea.kalshi_spread.samples() > 0) {
+      report.kalshi_spread_mean = ea.kalshi_spread.mean();
+    }
+    if (ea.poly_spread.samples() > 0) {
+      report.poly_spread_mean = ea.poly_spread.mean();
     }
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();
