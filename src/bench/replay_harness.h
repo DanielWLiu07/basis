@@ -75,6 +75,12 @@ struct ReplayStats {
     // other): an actual, fees-aside arbitrage between the books.
     std::uint64_t two_sided_updates = 0;
     std::uint64_t crossable_updates = 0;
+    // Persistence of those dislocations: distinct crossed runs, and the
+    // longest observed span the books stayed crossed (first to last crossed
+    // update of a run, so a run seen at a single update spans 0). This is
+    // the window an execution engine would have had to act in.
+    std::uint64_t crossable_episodes = 0;
+    std::int64_t crossable_longest_ns = 0;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -144,6 +150,12 @@ class ReplayHarness {
     analytics::DivergenceTracker poly_spread;
     std::uint64_t two_sided_updates = 0;
     std::uint64_t crossable_updates = 0;
+    // Crossed-run state: a run opens on the first crossed update after an
+    // uncrossed (or initial) one and closes on the next uncrossed update.
+    bool in_cross = false;
+    std::int64_t cross_start_ns = 0;
+    std::uint64_t crossable_episodes = 0;
+    std::int64_t crossable_longest_ns = 0;
     analytics::CrossCorrelationEstimator lead_lag;
     analytics::EventStudyEstimator event_study;
 
