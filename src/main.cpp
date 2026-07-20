@@ -218,6 +218,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"poly_spread_mean\": %.4f, "
                 "\"two_sided_updates\": %llu, "
                 "\"crossable_updates\": %llu, "
+                "\"crossable_episodes\": %llu, "
+                "\"crossable_longest_ms\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -231,6 +233,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.basis_ar1, e.basis_halflife_updates,
                 e.kalshi_spread_mean, e.poly_spread_mean,
                 u(e.two_sided_updates), u(e.crossable_updates),
+                u(e.crossable_episodes),
+                static_cast<double>(e.crossable_longest_ns) / 1e6,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -329,6 +333,14 @@ void print_stats(const basis::bench::ReplayStats& stats) {
       std::printf("  arb      %llu/%llu two-sided updates crossable (%.2f%%)\n",
                   static_cast<unsigned long long>(event.crossable_updates),
                   static_cast<unsigned long long>(event.two_sided_updates), pct);
+      // Persistence: how long the books stay crossed once they cross. The
+      // longest run is the widest window an execution engine had to act.
+      if (event.crossable_episodes > 0) {
+        std::printf("           %llu crossed episode%s, longest held %.1f ms\n",
+                    static_cast<unsigned long long>(event.crossable_episodes),
+                    event.crossable_episodes == 1 ? "" : "s",
+                    static_cast<double>(event.crossable_longest_ns) / 1e6);
+      }
     }
     const auto& ll = event.lead_lag;
     if (ll.correlation <= 0.0) {

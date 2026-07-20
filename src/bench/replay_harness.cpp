@@ -59,8 +59,22 @@ void ReplayHarness::on_event_update(const std::string& event_id,
   const auto kbid = kb.best_bid(), kask = kb.best_ask();
   const auto pbid = pb.best_bid(), pask = pb.best_ask();
   if (kbid && kask && pbid && pask) {
-    ++it->second.two_sided_updates;
-    if (*kbid > *pask || *pbid > *kask) ++it->second.crossable_updates;
+    auto& ea = it->second;
+    ++ea.two_sided_updates;
+    if (*kbid > *pask || *pbid > *kask) {
+      ++ea.crossable_updates;
+      if (!ea.in_cross) {
+        ea.in_cross = true;
+        ++ea.crossable_episodes;
+        ea.cross_start_ns = delta.ts_ns;
+      }
+      // Extend the run through this update; a run still open at end of
+      // replay is already fully accounted for.
+      ea.crossable_longest_ns =
+          std::max(ea.crossable_longest_ns, delta.ts_ns - ea.cross_start_ns);
+    } else {
+      ea.in_cross = false;
+    }
   }
 
   if (!session_) return;
@@ -178,6 +192,8 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     }
     report.two_sided_updates = ea.two_sided_updates;
     report.crossable_updates = ea.crossable_updates;
+    report.crossable_episodes = ea.crossable_episodes;
+    report.crossable_longest_ns = ea.crossable_longest_ns;
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();
     stats_.events.push_back(std::move(report));
