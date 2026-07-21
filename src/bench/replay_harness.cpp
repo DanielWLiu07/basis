@@ -63,6 +63,10 @@ void ReplayHarness::on_event_update(const std::string& event_id,
     ++ea.two_sided_updates;
     if (*kbid > *pask || *pbid > *kask) {
       ++ea.crossable_updates;
+      // Depth: how many cents the crossed side clears, whichever way it
+      // crosses (at most one direction can be positive at a time).
+      ea.cross_depth.observe(static_cast<double>(
+          std::max(*kbid - *pask, *pbid - *kask)));
       if (!ea.in_cross) {
         ea.in_cross = true;
         ++ea.crossable_episodes;
@@ -194,6 +198,10 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     report.crossable_updates = ea.crossable_updates;
     report.crossable_episodes = ea.crossable_episodes;
     report.crossable_longest_ns = ea.crossable_longest_ns;
+    if (ea.cross_depth.samples() > 0) {
+      report.crossable_depth_mean = ea.cross_depth.mean();
+      report.crossable_depth_max = ea.cross_depth.max();
+    }
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();
     stats_.events.push_back(std::move(report));
