@@ -81,6 +81,12 @@ struct ReplayStats {
     // the window an execution engine would have had to act in.
     std::uint64_t crossable_episodes = 0;
     std::int64_t crossable_longest_ns = 0;
+    // Depth of those dislocations, in cents: how far the richer bid sat
+    // above the cheaper ask across crossable updates. With frequency
+    // (crossable_updates), persistence (episodes/longest), and now size,
+    // the arb is fully characterized: how often, how long, how much.
+    double crossable_depth_mean = 0.0;
+    double crossable_depth_max = 0.0;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -156,6 +162,9 @@ class ReplayHarness {
     std::int64_t cross_start_ns = 0;
     std::uint64_t crossable_episodes = 0;
     std::int64_t crossable_longest_ns = 0;
+    // Running stats over the crossed depth (cents) of crossable updates;
+    // the same generic accumulator the spreads use.
+    analytics::DivergenceTracker cross_depth;
     analytics::CrossCorrelationEstimator lead_lag;
     analytics::EventStudyEstimator event_study;
 
