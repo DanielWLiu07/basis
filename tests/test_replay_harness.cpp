@@ -100,6 +100,10 @@ TEST(ReplayHarness, RunsThePipelineEndToEnd) {
   EXPECT_EQ(event.crossable_updates, event.two_sided_updates);
   EXPECT_EQ(event.crossable_episodes, 1u);
   EXPECT_EQ(event.crossable_longest_ns, 1000);
+  // Depth: Kalshi bid 47 over Polymarket ask 46 is 1c, then the bid lifts
+  // to 48 for 2c; mean 1.5c, max 2c.
+  EXPECT_DOUBLE_EQ(event.crossable_depth_mean, 1.5);
+  EXPECT_DOUBLE_EQ(event.crossable_depth_max, 2.0);
 
   // The api layer saw the same numbers the analytics did.
   ASSERT_FALSE(basis_updates.empty());
@@ -164,6 +168,10 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   // ts 5000 to 6000, and the first was only ever seen at one update.
   EXPECT_EQ(event.crossable_episodes, 2u);
   EXPECT_EQ(event.crossable_longest_ns, 1000);
+  // Depths over the three crossed updates: 47 over 46 (1c), then 48 over
+  // 46 twice (2c each).
+  EXPECT_DOUBLE_EQ(event.crossable_depth_mean, 5.0 / 3.0);
+  EXPECT_DOUBLE_EQ(event.crossable_depth_max, 2.0);
 }
 
 TEST(ReplayHarness, MissingFileReportsError) {

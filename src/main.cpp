@@ -220,6 +220,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_updates\": %llu, "
                 "\"crossable_episodes\": %llu, "
                 "\"crossable_longest_ms\": %.4f, "
+                "\"crossable_depth_mean\": %.4f, "
+                "\"crossable_depth_max\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -235,6 +237,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 u(e.two_sided_updates), u(e.crossable_updates),
                 u(e.crossable_episodes),
                 static_cast<double>(e.crossable_longest_ns) / 1e6,
+                e.crossable_depth_mean, e.crossable_depth_max,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -336,10 +339,12 @@ void print_stats(const basis::bench::ReplayStats& stats) {
       // Persistence: how long the books stay crossed once they cross. The
       // longest run is the widest window an execution engine had to act.
       if (event.crossable_episodes > 0) {
-        std::printf("           %llu crossed episode%s, longest held %.1f ms\n",
+        std::printf("           %llu crossed episode%s, longest held %.1f ms, "
+                    "depth mean %.1fc max %.0fc\n",
                     static_cast<unsigned long long>(event.crossable_episodes),
                     event.crossable_episodes == 1 ? "" : "s",
-                    static_cast<double>(event.crossable_longest_ns) / 1e6);
+                    static_cast<double>(event.crossable_longest_ns) / 1e6,
+                    event.crossable_depth_mean, event.crossable_depth_max);
       }
     }
     const auto& ll = event.lead_lag;
