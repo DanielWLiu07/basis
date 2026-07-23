@@ -224,6 +224,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_depth_max\": %.4f, "
                 "\"crossable_edge_mean_dollars\": %.4f, "
                 "\"crossable_edge_max_dollars\": %.4f, "
+                "\"stale_basis_samples\": %llu, "
+                "\"stalest_quote_seconds\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -241,6 +243,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 static_cast<double>(e.crossable_longest_ns) / 1e6,
                 e.crossable_depth_mean, e.crossable_depth_max,
                 e.crossable_edge_mean_dollars, e.crossable_edge_max_dollars,
+                u(e.stale_basis_samples), e.stalest_quote_seconds,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -317,6 +320,17 @@ void print_stats(const basis::bench::ReplayStats& stats) {
     } else if (event.basis_samples >= 3) {
       std::printf("           not mean-reverting (ar1 %.3f)\n",
                   event.basis_ar1);
+    }
+    // Freshness: how much of the basis series was priced against a quote
+    // the other venue had not refreshed in over 5 seconds. High numbers
+    // mean the "gap" is mostly one side not quoting, not a live signal.
+    if (event.stale_basis_samples > 0) {
+      const double pct = 100.0 * static_cast<double>(event.stale_basis_samples) /
+                         static_cast<double>(event.basis_samples);
+      std::printf("           %llu samples (%.1f%%) priced on a >5s-old quote, "
+                  "stalest %.1fs\n",
+                  static_cast<unsigned long long>(event.stale_basis_samples),
+                  pct, event.stalest_quote_seconds);
     }
     // Bid-ask spread per venue, and whether the basis actually clears it: a
     // mid gap smaller than the cost of crossing both books is quoting noise,
