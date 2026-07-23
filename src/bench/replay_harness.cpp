@@ -65,8 +65,20 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       ++ea.crossable_updates;
       // Depth: how many cents the crossed side clears, whichever way it
       // crosses (at most one direction can be positive at a time).
-      ea.cross_depth.observe(static_cast<double>(
-          std::max(*kbid - *pask, *pbid - *kask)));
+      const bool kalshi_rich = *kbid > *pask;
+      const int depth = kalshi_rich ? *kbid - *pask : *pbid - *kask;
+      ea.cross_depth.observe(static_cast<double>(depth));
+      // Executable edge at the touch: sell into the richer bid, lift the
+      // cheaper ask; one taker order can cross at most the smaller touch
+      // size. Sizes are present whenever the sides are (zero levels are
+      // removed on apply), so value_or(0) is only a type-level fallback.
+      const auto& rich = kalshi_rich ? kb : pb;
+      const auto& cheap = kalshi_rich ? pb : kb;
+      const std::int64_t contracts =
+          std::min(rich.best_bid_size().value_or(0),
+                   cheap.best_ask_size().value_or(0));
+      ea.cross_edge.observe(static_cast<double>(depth) *
+                            static_cast<double>(contracts) / 100.0);
       if (!ea.in_cross) {
         ea.in_cross = true;
         ++ea.crossable_episodes;
@@ -201,6 +213,8 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     if (ea.cross_depth.samples() > 0) {
       report.crossable_depth_mean = ea.cross_depth.mean();
       report.crossable_depth_max = ea.cross_depth.max();
+      report.crossable_edge_mean_dollars = ea.cross_edge.mean();
+      report.crossable_edge_max_dollars = ea.cross_edge.max();
     }
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();

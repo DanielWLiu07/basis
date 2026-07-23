@@ -87,6 +87,12 @@ struct ReplayStats {
     // the arb is fully characterized: how often, how long, how much.
     double crossable_depth_mean = 0.0;
     double crossable_depth_max = 0.0;
+    // Executable edge at the touch, in dollars: depth times the smaller of
+    // the two touch sizes (the most contracts one taker order could cross
+    // for), per crossable update. Depth says the books crossed; this says
+    // what crossing them was worth.
+    double crossable_edge_mean_dollars = 0.0;
+    double crossable_edge_max_dollars = 0.0;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -162,9 +168,11 @@ class ReplayHarness {
     std::int64_t cross_start_ns = 0;
     std::uint64_t crossable_episodes = 0;
     std::int64_t crossable_longest_ns = 0;
-    // Running stats over the crossed depth (cents) of crossable updates;
-    // the same generic accumulator the spreads use.
+    // Running stats over the crossed depth (cents) and the executable
+    // touch notional (dollars) of crossable updates; the same generic
+    // accumulator the spreads use.
     analytics::DivergenceTracker cross_depth;
+    analytics::DivergenceTracker cross_edge;
     analytics::CrossCorrelationEstimator lead_lag;
     analytics::EventStudyEstimator event_study;
 
