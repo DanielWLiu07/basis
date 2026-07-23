@@ -51,6 +51,19 @@ TEST(OrderBook, BestBidTracksHighestBestAskTracksLowest) {
   EXPECT_EQ(*b.best_ask(), 51);
 }
 
+TEST(OrderBook, TouchSizesFollowTheBestLevels) {
+  OrderBook b;
+  EXPECT_FALSE(b.best_bid_size().has_value());
+  EXPECT_FALSE(b.best_ask_size().has_value());
+  b.apply(delta(Side::Bid, 45, 100));
+  b.apply(delta(Side::Bid, 47, 25));
+  b.apply(delta(Side::Ask, 51, 70));
+  EXPECT_EQ(*b.best_bid_size(), 25);   // the 47 level, not the deeper 45
+  EXPECT_EQ(*b.best_ask_size(), 70);
+  b.apply(delta(Side::Bid, 47, 0));    // pull the top: size follows to 45
+  EXPECT_EQ(*b.best_bid_size(), 100);
+}
+
 TEST(OrderBook, ZeroSizeRemovesLevel) {
   OrderBook b;
   b.apply(delta(Side::Bid, 45, 100));

@@ -222,6 +222,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_longest_ms\": %.4f, "
                 "\"crossable_depth_mean\": %.4f, "
                 "\"crossable_depth_max\": %.4f, "
+                "\"crossable_edge_mean_dollars\": %.4f, "
+                "\"crossable_edge_max_dollars\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
                 "\"samples\": %llu, \"ci_low_seconds\": %.4f, "
                 "\"ci_high_seconds\": %.4f, \"resamples\": %llu, "
@@ -238,6 +240,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 u(e.crossable_episodes),
                 static_cast<double>(e.crossable_longest_ns) / 1e6,
                 e.crossable_depth_mean, e.crossable_depth_max,
+                e.crossable_edge_mean_dollars, e.crossable_edge_max_dollars,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
                 ll.lead_is_significant() ? "true" : "false",
@@ -345,6 +348,12 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     event.crossable_episodes == 1 ? "" : "s",
                     static_cast<double>(event.crossable_longest_ns) / 1e6,
                     event.crossable_depth_mean, event.crossable_depth_max);
+        // Depth times the smaller touch size: what one taker order could
+        // actually capture, not just how far the mids disagreed.
+        std::printf("           edge at the touch mean $%.2f  max $%.2f "
+                    "per crossed update\n",
+                    event.crossable_edge_mean_dollars,
+                    event.crossable_edge_max_dollars);
       }
     }
     const auto& ll = event.lead_lag;

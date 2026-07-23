@@ -29,6 +29,11 @@ class OrderBook {
   std::optional<int> best_ask() const;
   std::optional<double> mid() const;  // midpoint in cents
 
+  // Size resting at the touch (contracts). nullopt when that side is empty;
+  // never zero, because zero-size levels are removed on apply.
+  std::optional<std::int64_t> best_bid_size() const;
+  std::optional<std::int64_t> best_ask_size() const;
+
   bool empty() const { return bids_.empty() && asks_.empty(); }
 
  private:

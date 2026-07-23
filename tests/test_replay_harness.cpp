@@ -104,6 +104,10 @@ TEST(ReplayHarness, RunsThePipelineEndToEnd) {
   // to 48 for 2c; mean 1.5c, max 2c.
   EXPECT_DOUBLE_EQ(event.crossable_depth_mean, 1.5);
   EXPECT_DOUBLE_EQ(event.crossable_depth_max, 2.0);
+  // Edge at the touch: 1c * min(100 bid, 70 ask) = $0.70, then the fresh
+  // 48 bid has only 25 resting: 2c * min(25, 70) = $0.50.
+  EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.70);
+  EXPECT_DOUBLE_EQ(event.crossable_edge_mean_dollars, 0.60);
 
   // The api layer saw the same numbers the analytics did.
   ASSERT_FALSE(basis_updates.empty());
@@ -172,6 +176,10 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   // 46 twice (2c each).
   EXPECT_DOUBLE_EQ(event.crossable_depth_mean, 5.0 / 3.0);
   EXPECT_DOUBLE_EQ(event.crossable_depth_max, 2.0);
+  // Touch edge: 1c * min(25, 70) = $0.25, then 2c * min(10, 70) = $0.20
+  // twice (the deep 30 bid never changes the touch).
+  EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.25);
+  EXPECT_DOUBLE_EQ(event.crossable_edge_mean_dollars, 0.65 / 3.0);
 }
 
 TEST(ReplayHarness, MissingFileReportsError) {

@@ -55,6 +55,16 @@ std::optional<int> OrderBook::best_ask() const {
   return asks_.begin()->first;
 }
 
+std::optional<std::int64_t> OrderBook::best_bid_size() const {
+  if (bids_.empty()) return std::nullopt;
+  return bids_.begin()->second;
+}
+
+std::optional<std::int64_t> OrderBook::best_ask_size() const {
+  if (asks_.empty()) return std::nullopt;
+  return asks_.begin()->second;
+}
+
 std::optional<double> OrderBook::mid() const {
   const auto bid = best_bid();
   const auto ask = best_ask();
