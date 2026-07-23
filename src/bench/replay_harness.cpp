@@ -33,10 +33,24 @@ void ReplayHarness::on_event_update(const std::string& event_id,
   if (it == analytics_.end()) {
     it = analytics_.emplace(event_id, EventAnalytics(lead_lag_config_)).first;
   }
+  // The venue this delta came from is fresh by definition; a basis sample
+  // is only as live as the other venue's last update.
+  if (delta.venue == model::Venue::Kalshi) {
+    it->second.last_kalshi_ns = delta.ts_ns;
+  } else {
+    it->second.last_poly_ns = delta.ts_ns;
+  }
   if (kalshi_mid && poly_mid) {
-    it->second.divergence.observe(*kalshi_mid - *poly_mid);
-    it->second.lead_lag.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
-    it->second.event_study.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
+    auto& ea = it->second;
+    const std::int64_t other_last = delta.venue == model::Venue::Kalshi
+                                        ? ea.last_poly_ns
+                                        : ea.last_kalshi_ns;
+    const std::int64_t age = delta.ts_ns - other_last;
+    ea.stalest_quote_ns = std::max(ea.stalest_quote_ns, age);
+    if (age > kStaleQuoteNs) ++ea.stale_basis_samples;
+    ea.divergence.observe(*kalshi_mid - *poly_mid);
+    ea.lead_lag.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
+    ea.event_study.observe(*kalshi_mid, *poly_mid, delta.ts_ns);
   }
   // Track each venue's bid-ask spread whenever it is two-sided, so the basis
   // can be read against the cost of crossing each book.
@@ -216,6 +230,9 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.crossable_edge_mean_dollars = ea.cross_edge.mean();
       report.crossable_edge_max_dollars = ea.cross_edge.max();
     }
+    report.stale_basis_samples = ea.stale_basis_samples;
+    report.stalest_quote_seconds =
+        static_cast<double>(ea.stalest_quote_ns) / 1e9;
     report.lead_lag = ea.lead_lag.estimate();
     report.event_study = ea.event_study.estimate();
     stats_.events.push_back(std::move(report));

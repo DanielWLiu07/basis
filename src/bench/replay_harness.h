@@ -18,6 +18,10 @@
 
 namespace basis::bench {
 
+// A basis sample priced while the other venue's book is older than this is
+// counted as stale: the "gap" it shows may just be one side not quoting.
+inline constexpr std::int64_t kStaleQuoteNs = 5'000'000'000;  // 5 seconds
+
 // Everything one replay produced. Counters follow the no-silent-drop rule:
 // every record is accounted for as deltas, ignored, or malformed.
 struct ReplayStats {
@@ -93,6 +97,12 @@ struct ReplayStats {
     // what crossing them was worth.
     double crossable_edge_mean_dollars = 0.0;
     double crossable_edge_max_dollars = 0.0;
+    // Freshness of the basis: a sample priced while the *other* venue had
+    // not updated for more than kStaleQuoteNs is built on a stale quote
+    // and says little about the live gap. Counted against basis_samples,
+    // with the worst cross-venue quote age seen at any sample.
+    std::uint64_t stale_basis_samples = 0;
+    double stalest_quote_seconds = 0.0;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -173,6 +183,11 @@ class ReplayHarness {
     // accumulator the spreads use.
     analytics::DivergenceTracker cross_depth;
     analytics::DivergenceTracker cross_edge;
+    // Last update receive time per venue, for quote-age at sample time.
+    std::int64_t last_kalshi_ns = 0;
+    std::int64_t last_poly_ns = 0;
+    std::uint64_t stale_basis_samples = 0;
+    std::int64_t stalest_quote_ns = 0;
     analytics::CrossCorrelationEstimator lead_lag;
     analytics::EventStudyEstimator event_study;
 

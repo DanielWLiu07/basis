@@ -108,6 +108,8 @@ TEST(ReplayHarness, RunsThePipelineEndToEnd) {
   // 48 bid has only 25 resting: 2c * min(25, 70) = $0.50.
   EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.70);
   EXPECT_DOUBLE_EQ(event.crossable_edge_mean_dollars, 0.60);
+  // All updates land within microseconds of each other: nothing is stale.
+  EXPECT_EQ(event.stale_basis_samples, 0u);
 
   // The api layer saw the same numbers the analytics did.
   ASSERT_FALSE(basis_updates.empty());
@@ -180,6 +182,44 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   // twice (the deep 30 bid never changes the touch).
   EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.25);
   EXPECT_DOUBLE_EQ(event.crossable_edge_mean_dollars, 0.65 / 3.0);
+}
+
+// A venue going quiet must show up as staleness, not as a live basis: the
+// Kalshi delta 7 seconds after Polymarket's last update prices the basis
+// against a 7s-old book.
+std::string write_stale_fixture() {
+  const auto path = testing::TempDir() + "stale.feedlog";
+  std::ofstream out(path);
+  out << "1000\tkalshi\t"
+      << R"({"type":"orderbook_snapshot","sid":1,"seq":5,"msg":{)"
+      << R"("market_ticker":"FED-26SEP-CUT","yes":[[45,100]],"no":[[53,60]]}})"
+      << "\n";
+  out << "2000\tpolymarket\t"
+      << R"({"event_type":"book","asset_id":"7132107","market":"0xabc",)"
+      << R"("bids":[{"price":"0.44","size":"90"}],)"
+      << R"("asks":[{"price":"0.46","size":"70"}]})"
+      << "\n";
+  out << "7000002000\tkalshi\t"
+      << R"({"type":"orderbook_delta","sid":1,"seq":6,"msg":{)"
+      << R"("market_ticker":"FED-26SEP-CUT","price":44,"delta":5,"side":"yes"}})"
+      << "\n";
+  return path;
+}
+
+TEST(ReplayHarness, FlagsBasisSamplesPricedOnStaleQuotes) {
+  const auto reg = make_registry();
+  ReplayHarness harness(reg);
+  const auto stats = harness.run(write_stale_fixture());
+  ASSERT_TRUE(stats.has_value());
+  ASSERT_EQ(stats->events.size(), 1u);
+  const auto& event = stats->events[0];
+
+  // The Polymarket book at ts 2000 prices against a 1000ns-old Kalshi
+  // quote (fresh); the Kalshi delta at ts ~7s prices against Polymarket's
+  // ts-2000 book, 7 seconds stale.
+  EXPECT_GE(event.basis_samples, 2u);
+  EXPECT_EQ(event.stale_basis_samples, 1u);
+  EXPECT_NEAR(event.stalest_quote_seconds, 7.0, 1e-6);
 }
 
 TEST(ReplayHarness, MissingFileReportsError) {
