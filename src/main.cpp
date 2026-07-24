@@ -1,5 +1,6 @@
 #include <charconv>
 #include <cstdio>
+#include <fstream>
 #include <memory_resource>
 #include <optional>
 #include <string>
@@ -57,7 +58,9 @@ int usage() {
       "      runs the hot path on Bloomberg bdlma arenas (needs a build\n"
       "      with BASIS_ENABLE_BDE); --breakdown splits latency into parse\n"
       "      vs downstream (a separate profiling run, not the headline);\n"
-      "      --json prints one machine-readable object and nothing else\n"
+      "      --json prints one machine-readable object and nothing else;\n"
+      "      --csv <file> writes the api-layer stream as long-format rows\n"
+      "      (recv_ns,event_id,field,value) for plotting\n"
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
@@ -468,6 +471,7 @@ int run_replay(const std::vector<std::string_view>& args) {
   const auto alloc_mode = flag_string(args, "--alloc", "heap");
   const bool breakdown = has_flag(args, "--breakdown");
   const bool as_json = has_flag(args, "--json");
+  const auto csv_path = flag_string(args, "--csv", "");
 
   std::string error;
   const auto registry =
@@ -505,6 +509,29 @@ int run_replay(const std::vector<std::string_view>& args) {
   }
 
   basis::api::InProcessSession session;
+
+  // --csv taps the same api-layer stream any consumer would see and writes
+  // it as long-format rows (recv_ns,event_id,field,value), one per update:
+  // trivially pivotable, lossless, and identical to what a subscriber gets.
+  std::ofstream csv;
+  if (!csv_path.empty()) {
+    csv.open(csv_path, std::ios::trunc);
+    if (!csv) {
+      basis::log::error("cannot open --csv file: " + csv_path);
+      return 1;
+    }
+    csv << "recv_ns,event_id,field,value\n";
+    for (const auto& event_id : registry->event_ids()) {
+      for (const char* field : {"kalshi_mid", "poly_mid", "basis"}) {
+        session.subscribe(event_id, field,
+                          [&csv, event_id, field](const basis::api::Update& u) {
+                            csv << u.ts_ns << ',' << event_id << ',' << field
+                                << ',' << u.value << '\n';
+                          });
+      }
+    }
+  }
+
   basis::bench::ReplayHarness harness(*registry, &session, {}, book_mr);
   harness.set_parse_arena(parse_arena);
   harness.set_breakdown(breakdown);
