@@ -250,3 +250,72 @@ TEST(ReplayHarness, BreakdownIsOffByDefaultAndOnWhenAsked) {
   EXPECT_LE(with->parse_ns_total + with->downstream_ns_total,
             with->pipeline_ns);
 }
+
+// summarize() is a pure function of ReplayStats, so it can be pinned with a
+// hand-built input rather than a replay fixture.
+TEST(ReplaySummary, TotalsRankingAndTruncation) {
+  using basis::bench::ReplayStats;
+  ReplayStats stats;
+
+  const auto add = [&](const char* id, std::uint64_t samples,
+                       std::uint64_t crossable, std::uint64_t episodes,
+                       std::int64_t longest_ns, double edge_mean,
+                       double edge_max) {
+    ReplayStats::EventReport e;
+    e.event_id = id;
+    e.basis_samples = samples;
+    e.crossable_updates = crossable;
+    e.crossable_episodes = episodes;
+    e.crossable_longest_ns = longest_ns;
+    e.crossable_edge_mean_dollars = edge_mean;
+    e.crossable_edge_max_dollars = edge_max;
+    stats.events.push_back(std::move(e));
+  };
+
+  add("alpha", 100, 10, 2, 5'000'000, 0.30, 0.50);
+  add("bravo", 200, 4, 1, 1'000'000, 0.80, 1.20);
+  add("charlie", 50, 0, 0, 0, 0.0, 0.0);  // overlap but never crossed
+  add("delta", 0, 0, 0, 0, 0.0, 0.0);     // no overlap at all
+
+  const auto s = basis::bench::summarize(stats);
+  EXPECT_EQ(s.events_tracked, 4u);
+  EXPECT_EQ(s.events_with_overlap, 3u);
+  EXPECT_EQ(s.events_crossable, 2u);
+  EXPECT_EQ(s.basis_samples, 350u);
+  EXPECT_EQ(s.crossable_updates, 14u);
+  EXPECT_EQ(s.crossable_episodes, 3u);
+
+  // Ranked by max edge, not by activity: bravo's $1.20 beats alpha's $0.50
+  // even though alpha crossed more often.
+  ASSERT_EQ(s.top_by_edge.size(), 2u);
+  EXPECT_EQ(s.top_by_edge[0].event_id, "bravo");
+  EXPECT_EQ(s.top_by_edge[1].event_id, "alpha");
+  EXPECT_DOUBLE_EQ(s.top_by_edge[0].edge_max_dollars, 1.20);
+  EXPECT_EQ(s.top_by_edge[0].crossable_updates, 4u);
+  EXPECT_EQ(s.top_by_edge[0].crossable_longest_ns, 1'000'000);
+
+  // top_n caps the list after ranking, so the best event survives the cut.
+  const auto top1 = basis::bench::summarize(stats, 1);
+  ASSERT_EQ(top1.top_by_edge.size(), 1u);
+  EXPECT_EQ(top1.top_by_edge[0].event_id, "bravo");
+}
+
+TEST(ReplaySummary, EqualEdgesRankDeterministicallyById) {
+  using basis::bench::ReplayStats;
+  ReplayStats stats;
+  for (const char* id : {"zulu", "mike", "echo"}) {
+    ReplayStats::EventReport e;
+    e.event_id = id;
+    e.basis_samples = 10;
+    e.crossable_updates = 1;
+    e.crossable_episodes = 1;
+    e.crossable_edge_mean_dollars = 0.25;
+    e.crossable_edge_max_dollars = 0.25;
+    stats.events.push_back(std::move(e));
+  }
+  const auto s = basis::bench::summarize(stats);
+  ASSERT_EQ(s.top_by_edge.size(), 3u);
+  EXPECT_EQ(s.top_by_edge[0].event_id, "echo");
+  EXPECT_EQ(s.top_by_edge[1].event_id, "mike");
+  EXPECT_EQ(s.top_by_edge[2].event_id, "zulu");
+}

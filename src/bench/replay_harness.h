@@ -109,6 +109,34 @@ struct ReplayStats {
   std::vector<EventReport> events;  // sorted by event id
 };
 
+// Session-level rollup of one replay. Per-event blocks answer "what did
+// this market do"; the summary answers "across the whole capture, where
+// was the edge" - totals over every event plus the crossable events
+// ranked by the largest executable edge seen at the touch.
+struct ReplaySummary {
+  std::uint64_t events_tracked = 0;
+  std::uint64_t events_with_overlap = 0;  // basis_samples > 0
+  std::uint64_t events_crossable = 0;     // crossable_updates > 0
+  std::uint64_t basis_samples = 0;
+  std::uint64_t crossable_updates = 0;
+  std::uint64_t crossable_episodes = 0;
+
+  struct RankedEvent {
+    std::string event_id;
+    std::uint64_t crossable_updates = 0;
+    std::uint64_t crossable_episodes = 0;
+    std::int64_t crossable_longest_ns = 0;
+    double edge_mean_dollars = 0.0;
+    double edge_max_dollars = 0.0;
+  };
+  // Crossable events, best edge first (max edge, then mean edge, then
+  // event id so equal events rank deterministically). At most top_n.
+  std::vector<RankedEvent> top_by_edge;
+};
+
+// Pure rollup over an already-produced ReplayStats; no harness state.
+ReplaySummary summarize(const ReplayStats& stats, std::size_t top_n = 5);
+
 // Per-message allocation context for the parse path. resource() backs each
 // message's ParseResult; release() runs after the message's deltas have
 // been consumed, so an arena implementation can drop everything at once.
