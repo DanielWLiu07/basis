@@ -201,6 +201,25 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"parse_bytes_per_msg\": %.1f, \"book_per_msg\": %.4f},\n",
                 parse_per_msg, parse_bytes_per_msg, book_per_msg);
   }
+  const auto summary = basis::bench::summarize(stats);
+  std::printf("  \"summary\": {\"events_tracked\": %llu, "
+              "\"events_with_overlap\": %llu, \"events_crossable\": %llu, "
+              "\"basis_samples\": %llu, \"crossable_updates\": %llu, "
+              "\"crossable_episodes\": %llu, \"top_by_edge\": [",
+              u(summary.events_tracked), u(summary.events_with_overlap),
+              u(summary.events_crossable), u(summary.basis_samples),
+              u(summary.crossable_updates), u(summary.crossable_episodes));
+  for (std::size_t i = 0; i < summary.top_by_edge.size(); ++i) {
+    const auto& r = summary.top_by_edge[i];
+    std::printf("%s{\"event_id\": \"%s\", \"edge_max_dollars\": %.4f, "
+                "\"edge_mean_dollars\": %.4f, \"crossable_updates\": %llu, "
+                "\"crossable_episodes\": %llu, \"crossable_longest_ms\": %.4f}",
+                i == 0 ? "" : ", ", r.event_id.c_str(), r.edge_max_dollars,
+                r.edge_mean_dollars, u(r.crossable_updates),
+                u(r.crossable_episodes),
+                static_cast<double>(r.crossable_longest_ns) / 1e6);
+  }
+  std::printf("]},\n");
   std::printf("  \"events\": [");
   for (std::size_t i = 0; i < stats.events.size(); ++i) {
     const auto& e = stats.events[i];
@@ -437,6 +456,32 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   "%s) -- no reliable lead\n",
                   leader_name(consensus.crosscorr),
                   leader_name(consensus.event_study));
+    }
+  }
+
+  // Session rollup: with one synthetic event this is a sanity echo; on a
+  // real multi-market capture it is the headline - where the edge was.
+  if (!stats.events.empty()) {
+    const auto s = basis::bench::summarize(stats);
+    std::printf("\nsummary  %llu events tracked, %llu with overlap, "
+                "%llu crossable\n",
+                static_cast<unsigned long long>(s.events_tracked),
+                static_cast<unsigned long long>(s.events_with_overlap),
+                static_cast<unsigned long long>(s.events_crossable));
+    std::printf("         %llu basis samples, %llu crossable updates in "
+                "%llu episodes\n",
+                static_cast<unsigned long long>(s.basis_samples),
+                static_cast<unsigned long long>(s.crossable_updates),
+                static_cast<unsigned long long>(s.crossable_episodes));
+    for (std::size_t i = 0; i < s.top_by_edge.size(); ++i) {
+      const auto& r = s.top_by_edge[i];
+      std::printf("         %s %s  edge max $%.2f mean $%.2f  "
+                  "(%llu crossed updates, %llu episodes, longest %.1f ms)\n",
+                  i == 0 ? "best edge" : "         ", r.event_id.c_str(),
+                  r.edge_max_dollars, r.edge_mean_dollars,
+                  static_cast<unsigned long long>(r.crossable_updates),
+                  static_cast<unsigned long long>(r.crossable_episodes),
+                  static_cast<double>(r.crossable_longest_ns) / 1e6);
     }
   }
 }

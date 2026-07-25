@@ -243,4 +243,31 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
   return stats_;
 }
 
+ReplaySummary summarize(const ReplayStats& stats, std::size_t top_n) {
+  ReplaySummary s;
+  s.events_tracked = stats.events.size();
+  for (const auto& e : stats.events) {
+    if (e.basis_samples > 0) ++s.events_with_overlap;
+    s.basis_samples += e.basis_samples;
+    s.crossable_updates += e.crossable_updates;
+    s.crossable_episodes += e.crossable_episodes;
+    if (e.crossable_updates == 0) continue;
+    ++s.events_crossable;
+    s.top_by_edge.push_back({e.event_id, e.crossable_updates,
+                             e.crossable_episodes, e.crossable_longest_ns,
+                             e.crossable_edge_mean_dollars,
+                             e.crossable_edge_max_dollars});
+  }
+  std::sort(s.top_by_edge.begin(), s.top_by_edge.end(),
+            [](const auto& a, const auto& b) {
+              if (a.edge_max_dollars != b.edge_max_dollars)
+                return a.edge_max_dollars > b.edge_max_dollars;
+              if (a.edge_mean_dollars != b.edge_mean_dollars)
+                return a.edge_mean_dollars > b.edge_mean_dollars;
+              return a.event_id < b.event_id;
+            });
+  if (s.top_by_edge.size() > top_n) s.top_by_edge.resize(top_n);
+  return s;
+}
+
 }  // namespace basis::bench
