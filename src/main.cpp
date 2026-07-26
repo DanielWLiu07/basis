@@ -60,6 +60,7 @@ int usage() {
       "      vs downstream (a separate profiling run, not the headline);\n"
       "      --json prints one machine-readable object and nothing else;\n"
       "      --csv <file> writes the api-layer stream as long-format rows\n"
+      "      --episodes-csv <file> writes one row per crossed episode\n"
       "      (recv_ns,event_id,field,value) for plotting\n"
 #ifdef BASIS_HAS_NET
       "\n"
@@ -517,6 +518,7 @@ int run_replay(const std::vector<std::string_view>& args) {
   const bool breakdown = has_flag(args, "--breakdown");
   const bool as_json = has_flag(args, "--json");
   const auto csv_path = flag_string(args, "--csv", "");
+  const auto episodes_csv_path = flag_string(args, "--episodes-csv", "");
 
   std::string error;
   const auto registry =
@@ -584,6 +586,33 @@ int run_replay(const std::vector<std::string_view>& args) {
   if (!stats) {
     basis::log::error(error);
     return 1;
+  }
+
+  // --episodes-csv writes one row per crossed run, in time order: the
+  // distribution behind the report's count/longest aggregates, ready for
+  // a histogram of how long dislocations persist and what they were worth.
+  if (!episodes_csv_path.empty()) {
+    std::ofstream ep_csv(episodes_csv_path, std::ios::trunc);
+    if (!ep_csv) {
+      basis::log::error("cannot open --episodes-csv file: " +
+                        episodes_csv_path);
+      return 1;
+    }
+    ep_csv << "event_id,start_ns,end_ns,duration_ms,updates,"
+              "depth_max_cents,edge_max_dollars\n";
+    char row[256];
+    for (const auto& event : stats->events) {
+      for (const auto& ep : event.episodes) {
+        std::snprintf(row, sizeof(row), "%s,%lld,%lld,%.4f,%llu,%.2f,%.2f\n",
+                      event.event_id.c_str(),
+                      static_cast<long long>(ep.start_ns),
+                      static_cast<long long>(ep.end_ns),
+                      static_cast<double>(ep.end_ns - ep.start_ns) / 1e6,
+                      static_cast<unsigned long long>(ep.updates),
+                      ep.depth_max_cents, ep.edge_max_dollars);
+        ep_csv << row;
+      }
+    }
   }
 
   // JSON mode prints one machine-readable object and nothing else, so a

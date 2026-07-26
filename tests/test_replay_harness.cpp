@@ -182,6 +182,24 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   // twice (the deep 30 bid never changes the touch).
   EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.25);
   EXPECT_DOUBLE_EQ(event.crossable_edge_mean_dollars, 0.65 / 3.0);
+
+  // The per-episode records carry the distribution behind those
+  // aggregates, in time order and consistent with them.
+  ASSERT_EQ(event.episodes.size(), event.crossable_episodes);
+  const auto& first = event.episodes[0];
+  EXPECT_EQ(first.start_ns, 3000);
+  EXPECT_EQ(first.end_ns, 3000);  // single-update run spans 0
+  EXPECT_EQ(first.updates, 1u);
+  EXPECT_DOUBLE_EQ(first.depth_max_cents, 1.0);
+  EXPECT_DOUBLE_EQ(first.edge_max_dollars, 0.25);
+  const auto& second = event.episodes[1];
+  EXPECT_EQ(second.start_ns, 5000);
+  EXPECT_EQ(second.end_ns, 6000);
+  EXPECT_EQ(second.updates, 2u);
+  EXPECT_DOUBLE_EQ(second.depth_max_cents, 2.0);
+  EXPECT_DOUBLE_EQ(second.edge_max_dollars, 0.20);
+  EXPECT_EQ(first.updates + second.updates, event.crossable_updates);
+  EXPECT_EQ(second.end_ns - second.start_ns, event.crossable_longest_ns);
 }
 
 // A venue going quiet must show up as staleness, not as a live basis: the

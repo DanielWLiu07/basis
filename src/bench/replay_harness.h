@@ -57,6 +57,17 @@ struct ReplayStats {
   std::int64_t parse_ns_total = 0;
   std::int64_t downstream_ns_total = 0;
 
+  // One crossed run, first to last crossed update. The aggregate episode
+  // counters answer "how often and how long"; keeping each episode lets a
+  // consumer see the distribution instead of just count/longest.
+  struct CrossedEpisode {
+    std::int64_t start_ns = 0;
+    std::int64_t end_ns = 0;  // last crossed update; single-update span is 0
+    std::uint64_t updates = 0;
+    double depth_max_cents = 0.0;
+    double edge_max_dollars = 0.0;
+  };
+
   struct EventReport {
     std::string event_id;
     std::uint64_t basis_samples = 0;
@@ -103,6 +114,10 @@ struct ReplayStats {
     // with the worst cross-venue quote age seen at any sample.
     std::uint64_t stale_basis_samples = 0;
     double stalest_quote_seconds = 0.0;
+    // Every crossed run in time order. Invariants the aggregates already
+    // promise: size() == crossable_episodes, updates sum to
+    // crossable_updates, and the widest span equals crossable_longest_ns.
+    std::vector<CrossedEpisode> episodes;
     analytics::LeadLagResult lead_lag;      // positive: Kalshi leads
     analytics::EventStudyResult event_study;  // independent cross-check
   };
@@ -211,6 +226,8 @@ class ReplayHarness {
     // accumulator the spreads use.
     analytics::DivergenceTracker cross_depth;
     analytics::DivergenceTracker cross_edge;
+    // Per-episode records; the open episode is always episodes.back().
+    std::vector<ReplayStats::CrossedEpisode> episodes;
     // Last update receive time per venue, for quote-age at sample time.
     std::int64_t last_kalshi_ns = 0;
     std::int64_t last_poly_ns = 0;
