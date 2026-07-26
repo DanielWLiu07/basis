@@ -91,17 +91,25 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       const std::int64_t contracts =
           std::min(rich.best_bid_size().value_or(0),
                    cheap.best_ask_size().value_or(0));
-      ea.cross_edge.observe(static_cast<double>(depth) *
-                            static_cast<double>(contracts) / 100.0);
+      const double edge_dollars = static_cast<double>(depth) *
+                                  static_cast<double>(contracts) / 100.0;
+      ea.cross_edge.observe(edge_dollars);
       if (!ea.in_cross) {
         ea.in_cross = true;
         ++ea.crossable_episodes;
         ea.cross_start_ns = delta.ts_ns;
+        ea.episodes.push_back({delta.ts_ns, delta.ts_ns, 0, 0.0, 0.0});
       }
       // Extend the run through this update; a run still open at end of
       // replay is already fully accounted for.
       ea.crossable_longest_ns =
           std::max(ea.crossable_longest_ns, delta.ts_ns - ea.cross_start_ns);
+      auto& ep = ea.episodes.back();
+      ep.end_ns = delta.ts_ns;
+      ++ep.updates;
+      ep.depth_max_cents = std::max(ep.depth_max_cents,
+                                    static_cast<double>(depth));
+      ep.edge_max_dollars = std::max(ep.edge_max_dollars, edge_dollars);
     } else {
       ea.in_cross = false;
     }
@@ -230,6 +238,7 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.crossable_edge_mean_dollars = ea.cross_edge.mean();
       report.crossable_edge_max_dollars = ea.cross_edge.max();
     }
+    report.episodes = ea.episodes;
     report.stale_basis_samples = ea.stale_basis_samples;
     report.stalest_quote_seconds =
         static_cast<double>(ea.stalest_quote_ns) / 1e9;
