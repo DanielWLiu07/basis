@@ -337,3 +337,36 @@ TEST(ReplaySummary, EqualEdgesRankDeterministicallyById) {
   EXPECT_EQ(s.top_by_edge[1].event_id, "mike");
   EXPECT_EQ(s.top_by_edge[2].event_id, "zulu");
 }
+
+// Two crossed bid levels against one deep ask: the touch edge sees only the
+// best levels, the sweep walks the whole crossed depth.
+TEST(ReplayHarness, SweepEdgeWalksPastTheTouch) {
+  const auto reg = make_registry();
+  const auto path = testing::TempDir() + "sweep.feedlog";
+  {
+    std::ofstream out(path);
+    // Kalshi: bids 48x10 and 47x20 (no 51 -> ask 49, uncrossed internally).
+    out << "1000\tkalshi\t"
+        << R"({"type":"orderbook_snapshot","sid":1,"seq":5,"msg":{)"
+        << R"("market_ticker":"FED-26SEP-CUT","yes":[[48,10],[47,20]],)"
+        << R"("no":[[51,60]]}})"
+        << "\n";
+    // Polymarket ask 46x70 crosses both kalshi bids.
+    out << "2000\tpolymarket\t"
+        << R"({"event_type":"book","asset_id":"7132107","market":"0xabc",)"
+        << R"("bids":[{"price":"0.44","size":"90"}],)"
+        << R"("asks":[{"price":"0.46","size":"70"}]})"
+        << "\n";
+  }
+  ReplayHarness harness(reg);
+  const auto stats = harness.run(path);
+  ASSERT_TRUE(stats.has_value());
+  ASSERT_EQ(stats->events.size(), 1u);
+  const auto& event = stats->events[0];
+  EXPECT_EQ(event.crossable_updates, 1u);
+  // Touch: 2c * min(10, 70) = $0.20. Sweep: 2c * 10 + 1c * 20 = $0.40.
+  EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.20);
+  EXPECT_DOUBLE_EQ(event.crossable_sweep_max_dollars, 0.40);
+  EXPECT_GE(event.crossable_sweep_mean_dollars,
+            event.crossable_edge_mean_dollars);
+}

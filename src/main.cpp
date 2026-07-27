@@ -247,6 +247,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_depth_max\": %.4f, "
                 "\"crossable_edge_mean_dollars\": %.4f, "
                 "\"crossable_edge_max_dollars\": %.4f, "
+                "\"crossable_sweep_mean_dollars\": %.4f, "
+                "\"crossable_sweep_max_dollars\": %.4f, "
                 "\"stale_basis_samples\": %llu, "
                 "\"stalest_quote_seconds\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
@@ -266,6 +268,7 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 static_cast<double>(e.crossable_longest_ns) / 1e6,
                 e.crossable_depth_mean, e.crossable_depth_max,
                 e.crossable_edge_mean_dollars, e.crossable_edge_max_dollars,
+                e.crossable_sweep_mean_dollars, e.crossable_sweep_max_dollars,
                 u(e.stale_basis_samples), e.stalest_quote_seconds,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
@@ -391,6 +394,13 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     "per crossed update\n",
                     event.crossable_edge_mean_dollars,
                     event.crossable_edge_max_dollars);
+        // The touch is one taker order at the best levels; the sweep walks
+        // the whole crossed depth. Equal numbers mean the cross never ran
+        // deeper than the top of book.
+        std::printf("           full-depth sweep mean $%.2f  max $%.2f "
+                    "per crossed update\n",
+                    event.crossable_sweep_mean_dollars,
+                    event.crossable_sweep_max_dollars);
       }
     }
     const auto& ll = event.lead_lag;

@@ -72,4 +72,22 @@ std::optional<double> OrderBook::mid() const {
   return (static_cast<double>(*bid) + static_cast<double>(*ask)) / 2.0;
 }
 
+std::int64_t crossed_sweep_cents(const OrderBook& rich, const OrderBook& cheap) {
+  std::int64_t total = 0;
+  auto bid = rich.bids_.begin();
+  auto ask = cheap.asks_.begin();
+  std::int64_t bid_left = bid != rich.bids_.end() ? bid->second : 0;
+  std::int64_t ask_left = ask != cheap.asks_.end() ? ask->second : 0;
+  while (bid != rich.bids_.end() && ask != cheap.asks_.end() &&
+         bid->first > ask->first) {
+    const std::int64_t matched = std::min(bid_left, ask_left);
+    total += static_cast<std::int64_t>(bid->first - ask->first) * matched;
+    bid_left -= matched;
+    ask_left -= matched;
+    if (bid_left == 0 && ++bid != rich.bids_.end()) bid_left = bid->second;
+    if (ask_left == 0 && ++ask != cheap.asks_.end()) ask_left = ask->second;
+  }
+  return total;
+}
+
 }  // namespace basis::model
