@@ -183,6 +183,15 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   EXPECT_DOUBLE_EQ(event.crossable_edge_max_dollars, 0.25);
   EXPECT_DOUBLE_EQ(event.crossable_edge_mean_dollars, 0.65 / 3.0);
 
+  // Net of Kalshi taker fees, the picture inverts for the small cross:
+  // ts 3000 grosses 1c * 25 = $0.25 but the Kalshi leg at 47c costs
+  // ceil(7*25*47*53/10000) = 44c -> net -$0.19; ts 5000/6000 gross
+  // 2c * 10 = $0.20 against an 18c fee at 48c -> net +$0.02 each. Only
+  // the deeper cross survives fees.
+  EXPECT_EQ(event.crossable_profitable_updates, 2u);
+  EXPECT_NEAR(event.crossable_net_edge_max_dollars, 0.02, 1e-9);
+  EXPECT_NEAR(event.crossable_net_edge_mean_dollars, -0.05, 1e-9);
+
   // The per-episode records carry the distribution behind those
   // aggregates, in time order and consistent with them.
   ASSERT_EQ(event.episodes.size(), event.crossable_episodes);

@@ -1,5 +1,7 @@
 #include "bench/replay_harness.h"
 
+#include "model/fees.h"
+
 #include <algorithm>
 #include <optional>
 
@@ -98,6 +100,17 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       // books to exhaustion.
       ea.cross_sweep.observe(
           static_cast<double>(model::crossed_sweep_cents(rich, cheap)) / 100.0);
+      // Net of fees: the Kalshi leg executes at Kalshi's touch (its bid
+      // when Kalshi is rich, its ask when it is cheap) and pays the taker
+      // fee; the Polymarket leg is fee-free. Crossable does not mean
+      // profitable - this is the number that decides.
+      const int kalshi_leg_price = kalshi_rich ? *kbid : *kask;
+      const std::int64_t fee_cents =
+          model::kalshi_taker_fee_cents(contracts, kalshi_leg_price);
+      const double net_dollars =
+          edge_dollars - static_cast<double>(fee_cents) / 100.0;
+      ea.cross_net_edge.observe(net_dollars);
+      if (net_dollars > 0.0) ++ea.profitable_updates;
       if (!ea.in_cross) {
         ea.in_cross = true;
         ++ea.crossable_episodes;
@@ -243,6 +256,9 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.crossable_edge_max_dollars = ea.cross_edge.max();
       report.crossable_sweep_mean_dollars = ea.cross_sweep.mean();
       report.crossable_sweep_max_dollars = ea.cross_sweep.max();
+      report.crossable_net_edge_mean_dollars = ea.cross_net_edge.mean();
+      report.crossable_net_edge_max_dollars = ea.cross_net_edge.max();
+      report.crossable_profitable_updates = ea.profitable_updates;
     }
     report.episodes = ea.episodes;
     report.stale_basis_samples = ea.stale_basis_samples;
