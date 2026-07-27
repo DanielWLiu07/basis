@@ -94,6 +94,10 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       const double edge_dollars = static_cast<double>(depth) *
                                   static_cast<double>(contracts) / 100.0;
       ea.cross_edge.observe(edge_dollars);
+      // Beyond the touch: everything the crossed depth held, walking both
+      // books to exhaustion.
+      ea.cross_sweep.observe(
+          static_cast<double>(model::crossed_sweep_cents(rich, cheap)) / 100.0);
       if (!ea.in_cross) {
         ea.in_cross = true;
         ++ea.crossable_episodes;
@@ -237,6 +241,8 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.crossable_depth_max = ea.cross_depth.max();
       report.crossable_edge_mean_dollars = ea.cross_edge.mean();
       report.crossable_edge_max_dollars = ea.cross_edge.max();
+      report.crossable_sweep_mean_dollars = ea.cross_sweep.mean();
+      report.crossable_sweep_max_dollars = ea.cross_sweep.max();
     }
     report.episodes = ea.episodes;
     report.stale_basis_samples = ea.stale_basis_samples;
