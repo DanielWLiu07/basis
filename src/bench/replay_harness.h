@@ -114,6 +114,13 @@ struct ReplayStats {
     // sweep is everything the crossed depth held. Sweep >= touch always.
     double crossable_sweep_mean_dollars = 0.0;
     double crossable_sweep_max_dollars = 0.0;
+    // Touch edge net of Kalshi taker fees (model/fees.h; the Polymarket
+    // leg is fee-free). Negative means the books crossed but crossing
+    // them lost money - "crossable" is not "profitable". The count is how
+    // many crossable updates stayed profitable after fees.
+    double crossable_net_edge_mean_dollars = 0.0;
+    double crossable_net_edge_max_dollars = 0.0;
+    std::uint64_t crossable_profitable_updates = 0;
     // Freshness of the basis: a sample priced while the *other* venue had
     // not updated for more than kStaleQuoteNs is built on a stale quote
     // and says little about the live gap. Counted against basis_samples,
@@ -233,6 +240,8 @@ class ReplayHarness {
     analytics::DivergenceTracker cross_depth;
     analytics::DivergenceTracker cross_edge;
     analytics::DivergenceTracker cross_sweep;
+    analytics::DivergenceTracker cross_net_edge;
+    std::uint64_t profitable_updates = 0;
     // Per-episode records; the open episode is always episodes.back().
     std::vector<ReplayStats::CrossedEpisode> episodes;
     // Last update receive time per venue, for quote-age at sample time.
