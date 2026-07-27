@@ -17,6 +17,7 @@ target_include_directories(basis_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(basis_core PUBLIC basis_warnings basis_sanitize)
 
 add_library(basis_model
+  model/fees.cpp
   model/order_book.cpp
   model/unified_book.cpp
 )

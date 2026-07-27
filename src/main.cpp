@@ -249,6 +249,9 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_edge_max_dollars\": %.4f, "
                 "\"crossable_sweep_mean_dollars\": %.4f, "
                 "\"crossable_sweep_max_dollars\": %.4f, "
+                "\"crossable_net_edge_mean_dollars\": %.4f, "
+                "\"crossable_net_edge_max_dollars\": %.4f, "
+                "\"crossable_profitable_updates\": %llu, "
                 "\"stale_basis_samples\": %llu, "
                 "\"stalest_quote_seconds\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
@@ -269,6 +272,9 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.crossable_depth_mean, e.crossable_depth_max,
                 e.crossable_edge_mean_dollars, e.crossable_edge_max_dollars,
                 e.crossable_sweep_mean_dollars, e.crossable_sweep_max_dollars,
+                e.crossable_net_edge_mean_dollars,
+                e.crossable_net_edge_max_dollars,
+                u(e.crossable_profitable_updates),
                 u(e.stale_basis_samples), e.stalest_quote_seconds,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
@@ -401,6 +407,15 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     "per crossed update\n",
                     event.crossable_sweep_mean_dollars,
                     event.crossable_sweep_max_dollars);
+        // Fees decide whether any of it was real: the Kalshi leg pays the
+        // taker fee (general schedule), the Polymarket leg is free.
+        std::printf("           net of Kalshi taker fees mean $%+.2f  "
+                    "max $%+.2f -- %llu/%llu crossed updates profitable\n",
+                    event.crossable_net_edge_mean_dollars,
+                    event.crossable_net_edge_max_dollars,
+                    static_cast<unsigned long long>(
+                        event.crossable_profitable_updates),
+                    static_cast<unsigned long long>(event.crossable_updates));
       }
     }
     const auto& ll = event.lead_lag;
