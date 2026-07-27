@@ -108,6 +108,12 @@ struct ReplayStats {
     // what crossing them was worth.
     double crossable_edge_mean_dollars = 0.0;
     double crossable_edge_max_dollars = 0.0;
+    // Full-depth sweep, in dollars: walk the richer book's bids against the
+    // cheaper book's asks to exhaustion (crossed_sweep_cents), per crossable
+    // update. The touch edge is one taker order at the best levels; the
+    // sweep is everything the crossed depth held. Sweep >= touch always.
+    double crossable_sweep_mean_dollars = 0.0;
+    double crossable_sweep_max_dollars = 0.0;
     // Freshness of the basis: a sample priced while the *other* venue had
     // not updated for more than kStaleQuoteNs is built on a stale quote
     // and says little about the live gap. Counted against basis_samples,
@@ -226,6 +232,7 @@ class ReplayHarness {
     // accumulator the spreads use.
     analytics::DivergenceTracker cross_depth;
     analytics::DivergenceTracker cross_edge;
+    analytics::DivergenceTracker cross_sweep;
     // Per-episode records; the open episode is always episodes.back().
     std::vector<ReplayStats::CrossedEpisode> episodes;
     // Last update receive time per venue, for quote-age at sample time.

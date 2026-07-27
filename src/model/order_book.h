@@ -36,9 +36,21 @@ class OrderBook {
 
   bool empty() const { return bids_.empty() && asks_.empty(); }
 
+  friend std::int64_t crossed_sweep_cents(const OrderBook& rich,
+                                          const OrderBook& cheap);
+
  private:
   std::pmr::map<int, std::int64_t, std::greater<int>> bids_;
   std::pmr::map<int, std::int64_t> asks_;
 };
+
+// Total capturable edge across the whole crossed depth, in cents: walk
+// rich's bids (descending) against cheap's asks (ascending), matching
+// contracts while the bid still clears the ask and summing
+// (bid - ask) * matched. The touch edge is this sum's first partial term;
+// the sweep is what crossing both books to exhaustion was worth. Zero when
+// the books do not cross. Sizes never overflow: prices are cents (< 100)
+// and venue sizes are far below the int64 range.
+std::int64_t crossed_sweep_cents(const OrderBook& rich, const OrderBook& cheap);
 
 }  // namespace basis::model

@@ -123,3 +123,42 @@ TEST(OrderBook, ClearEmptiesBook) {
   b.clear();
   EXPECT_TRUE(b.empty());
 }
+
+TEST(CrossedSweep, ZeroWhenNotCrossedOrEmpty) {
+  OrderBook rich, cheap;
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 0);
+  rich.apply(delta(Side::Bid, 45, 100));
+  cheap.apply(delta(Side::Ask, 46, 70));
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 0);  // 45 bid < 46 ask
+  cheap.apply(delta(Side::Ask, 45, 30));
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 0);  // touching is not crossed
+}
+
+TEST(CrossedSweep, SingleLevelEqualsTouchEdge) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 48, 10));
+  cheap.apply(delta(Side::Ask, 46, 70));
+  // One level each: the sweep is exactly depth * min(sizes) = 2c * 10.
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 20);
+}
+
+TEST(CrossedSweep, WalksPastTheTouchAndStopsAtTheUncross) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 48, 10));
+  rich.apply(delta(Side::Bid, 47, 20));
+  rich.apply(delta(Side::Bid, 45, 500));  // below the ask: never matched
+  cheap.apply(delta(Side::Ask, 46, 70));
+  // 48x10 fills against 46 (2c * 10), then 47x20 against the same level's
+  // remainder (1c * 20); the 45 bid no longer clears 46 and the walk stops.
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 20 + 20);
+}
+
+TEST(CrossedSweep, ExhaustsAnAskLevelAndContinuesDeeper) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 50, 100));
+  cheap.apply(delta(Side::Ask, 46, 30));
+  cheap.apply(delta(Side::Ask, 48, 40));
+  cheap.apply(delta(Side::Ask, 51, 999));  // above the bid: never matched
+  // One big bid sweeps two ask levels: 4c * 30 + 2c * 40, then 51 uncrosses.
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 120 + 80);
+}
