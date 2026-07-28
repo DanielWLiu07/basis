@@ -111,6 +111,15 @@ void ReplayHarness::on_event_update(const std::string& event_id,
           edge_dollars - static_cast<double>(fee_cents) / 100.0;
       ea.cross_net_edge.observe(net_dollars);
       if (net_dollars > 0.0) ++ea.profitable_updates;
+      // The optimal fee-aware sweep: only the fills in the crossed depth
+      // that still clear their per-fill Kalshi taker fee. What a taker
+      // would actually execute, as opposed to what the gross sweep says
+      // was on the screen.
+      const auto sweep_fill =
+          model::crossed_sweep_net(rich, cheap, kalshi_rich);
+      ea.cross_net_sweep.observe(
+          static_cast<double>(sweep_fill.net_cents) / 100.0);
+      if (sweep_fill.contracts > 0) ++ea.sweepable_updates;
       if (!ea.in_cross) {
         ea.in_cross = true;
         ++ea.crossable_episodes;
@@ -259,6 +268,9 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.crossable_net_edge_mean_dollars = ea.cross_net_edge.mean();
       report.crossable_net_edge_max_dollars = ea.cross_net_edge.max();
       report.crossable_profitable_updates = ea.profitable_updates;
+      report.crossable_net_sweep_mean_dollars = ea.cross_net_sweep.mean();
+      report.crossable_net_sweep_max_dollars = ea.cross_net_sweep.max();
+      report.crossable_sweepable_updates = ea.sweepable_updates;
     }
     report.episodes = ea.episodes;
     report.stale_basis_samples = ea.stale_basis_samples;

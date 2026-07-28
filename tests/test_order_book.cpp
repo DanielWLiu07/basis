@@ -162,3 +162,71 @@ TEST(CrossedSweep, ExhaustsAnAskLevelAndContinuesDeeper) {
   // One big bid sweeps two ask levels: 4c * 30 + 2c * 40, then 51 uncrosses.
   EXPECT_EQ(crossed_sweep_cents(rich, cheap), 120 + 80);
 }
+
+TEST(CrossedSweepNet, TakesNothingWhenNotCrossed) {
+  OrderBook rich, cheap;
+  auto fill = crossed_sweep_net(rich, cheap, true);
+  EXPECT_EQ(fill.net_cents, 0);
+  EXPECT_EQ(fill.contracts, 0);
+  rich.apply(delta(Side::Bid, 45, 100));
+  cheap.apply(delta(Side::Ask, 45, 30));  // touching is not crossed
+  fill = crossed_sweep_net(rich, cheap, false);
+  EXPECT_EQ(fill.net_cents, 0);
+  EXPECT_EQ(fill.contracts, 0);
+}
+
+TEST(CrossedSweepNet, KeepsAFillThatClearsItsFee) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 48, 10));
+  cheap.apply(delta(Side::Ask, 46, 70));
+  // Gross 2c * 10 = 20c; Kalshi leg at the rich bid pays fee(10, 48) = 18c.
+  const auto fill = crossed_sweep_net(rich, cheap, true);
+  EXPECT_EQ(fill.net_cents, 2);
+  EXPECT_EQ(fill.contracts, 10);
+}
+
+TEST(CrossedSweepNet, DeclinesAFillTheFeeEats) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 47, 25));
+  cheap.apply(delta(Side::Ask, 46, 25));
+  // Gross 1c * 25 = 25c but fee(25, 47) = 44c: a taker declines to trade.
+  auto fill = crossed_sweep_net(rich, cheap, true);
+  EXPECT_EQ(fill.net_cents, 0);
+  EXPECT_EQ(fill.contracts, 0);
+  // Breaking exactly even is also declining: gross 2c, fee(1, 50) = 2c.
+  rich.clear();
+  cheap.clear();
+  rich.apply(delta(Side::Bid, 50, 1));
+  cheap.apply(delta(Side::Ask, 48, 1));
+  fill = crossed_sweep_net(rich, cheap, true);
+  EXPECT_EQ(fill.net_cents, 0);
+  EXPECT_EQ(fill.contracts, 0);
+}
+
+TEST(CrossedSweepNet, StopsShortOfTheGrossSweep) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 48, 10));
+  rich.apply(delta(Side::Bid, 47, 20));
+  cheap.apply(delta(Side::Ask, 46, 70));
+  // Gross sweep says 40c. The touch fill nets 20c - fee(10, 48) = +2c and
+  // is taken; the deeper fill nets 20c - fee(20, 47) = -15c and is skipped.
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), 40);
+  const auto fill = crossed_sweep_net(rich, cheap, true);
+  EXPECT_EQ(fill.net_cents, 2);
+  EXPECT_EQ(fill.contracts, 10);
+}
+
+TEST(CrossedSweepNet, PricesTheFeeOnTheKalshiLeg) {
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 90, 10));
+  cheap.apply(delta(Side::Ask, 85, 10));
+  // Same books, opposite legs: gross is 50c either way, but the fee is
+  // priced where Kalshi executes - fee(10, 90) = 7c against the rich bid,
+  // fee(10, 85) = 9c against the cheap ask.
+  const auto kalshi_rich = crossed_sweep_net(rich, cheap, true);
+  EXPECT_EQ(kalshi_rich.net_cents, 43);
+  const auto kalshi_cheap = crossed_sweep_net(rich, cheap, false);
+  EXPECT_EQ(kalshi_cheap.net_cents, 41);
+  EXPECT_EQ(kalshi_rich.contracts, 10);
+  EXPECT_EQ(kalshi_cheap.contracts, 10);
+}

@@ -121,6 +121,15 @@ struct ReplayStats {
     double crossable_net_edge_mean_dollars = 0.0;
     double crossable_net_edge_max_dollars = 0.0;
     std::uint64_t crossable_profitable_updates = 0;
+    // The optimal fee-aware sweep (crossed_sweep_net): take only the fills
+    // in the crossed depth that still net positive after the Kalshi taker
+    // fee, per crossable update. Never negative - a taker who would lose
+    // money declines to trade - and never above the gross sweep; the gap
+    // between the two is what fees eat. The count is how many crossable
+    // updates had any fill worth taking at all.
+    double crossable_net_sweep_mean_dollars = 0.0;
+    double crossable_net_sweep_max_dollars = 0.0;
+    std::uint64_t crossable_sweepable_updates = 0;
     // Freshness of the basis: a sample priced while the *other* venue had
     // not updated for more than kStaleQuoteNs is built on a stale quote
     // and says little about the live gap. Counted against basis_samples,
@@ -242,6 +251,8 @@ class ReplayHarness {
     analytics::DivergenceTracker cross_sweep;
     analytics::DivergenceTracker cross_net_edge;
     std::uint64_t profitable_updates = 0;
+    analytics::DivergenceTracker cross_net_sweep;
+    std::uint64_t sweepable_updates = 0;
     // Per-episode records; the open episode is always episodes.back().
     std::vector<ReplayStats::CrossedEpisode> episodes;
     // Last update receive time per venue, for quote-age at sample time.

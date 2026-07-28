@@ -192,6 +192,14 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   EXPECT_NEAR(event.crossable_net_edge_max_dollars, 0.02, 1e-9);
   EXPECT_NEAR(event.crossable_net_edge_mean_dollars, -0.05, 1e-9);
 
+  // The optimal fee-aware sweep never goes negative: at ts 3000 it
+  // declines the losing fill entirely (0, not -$0.19), at ts 5000/6000 it
+  // takes the profitable touch fill for +$0.02. Two of three crossed
+  // updates had anything worth taking.
+  EXPECT_EQ(event.crossable_sweepable_updates, 2u);
+  EXPECT_NEAR(event.crossable_net_sweep_max_dollars, 0.02, 1e-9);
+  EXPECT_NEAR(event.crossable_net_sweep_mean_dollars, 0.04 / 3.0, 1e-9);
+
   // The per-episode records carry the distribution behind those
   // aggregates, in time order and consistent with them.
   ASSERT_EQ(event.episodes.size(), event.crossable_episodes);
@@ -378,4 +386,11 @@ TEST(ReplayHarness, SweepEdgeWalksPastTheTouch) {
   EXPECT_DOUBLE_EQ(event.crossable_sweep_max_dollars, 0.40);
   EXPECT_GE(event.crossable_sweep_mean_dollars,
             event.crossable_edge_mean_dollars);
+  // The gross sweep promised $0.40; the fee-aware optimal sweep keeps the
+  // touch fill (20c - 18c fee = +$0.02) and skips the deeper one
+  // (20c - 35c fee), so a taker executes 10 of the 30 crossed contracts.
+  EXPECT_EQ(event.crossable_sweepable_updates, 1u);
+  EXPECT_NEAR(event.crossable_net_sweep_max_dollars, 0.02, 1e-9);
+  EXPECT_LE(event.crossable_net_sweep_max_dollars,
+            event.crossable_sweep_max_dollars);
 }
