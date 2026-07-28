@@ -2,6 +2,8 @@
 
 #include <limits>
 
+#include "model/fees.h"
+
 namespace basis::model {
 
 void OrderBook::apply(const BookDelta& delta) {
@@ -88,6 +90,36 @@ std::int64_t crossed_sweep_cents(const OrderBook& rich, const OrderBook& cheap) 
     if (ask_left == 0 && ++ask != cheap.asks_.end()) ask_left = ask->second;
   }
   return total;
+}
+
+SweepFill crossed_sweep_net(const OrderBook& rich, const OrderBook& cheap,
+                            bool kalshi_is_rich) {
+  SweepFill fill;
+  auto bid = rich.bids_.begin();
+  auto ask = cheap.asks_.begin();
+  std::int64_t bid_left = bid != rich.bids_.end() ? bid->second : 0;
+  std::int64_t ask_left = ask != cheap.asks_.end() ? ask->second : 0;
+  while (bid != rich.bids_.end() && ask != cheap.asks_.end() &&
+         bid->first > ask->first) {
+    const std::int64_t matched = std::min(bid_left, ask_left);
+    const int kalshi_price = kalshi_is_rich ? bid->first : ask->first;
+    const std::int64_t gross =
+        static_cast<std::int64_t>(bid->first - ask->first) * matched;
+    const std::int64_t net =
+        gross - kalshi_taker_fee_cents(matched, kalshi_price);
+    // Each fill stands on its own: the fee's ceil means a deeper, larger
+    // fill can still clear after a thin one at the same depth did not, so
+    // a negative fill skips rather than stops the walk.
+    if (net > 0) {
+      fill.net_cents += net;
+      fill.contracts += matched;
+    }
+    bid_left -= matched;
+    ask_left -= matched;
+    if (bid_left == 0 && ++bid != rich.bids_.end()) bid_left = bid->second;
+    if (ask_left == 0 && ++ask != cheap.asks_.end()) ask_left = ask->second;
+  }
+  return fill;
 }
 
 }  // namespace basis::model
