@@ -252,6 +252,9 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_net_edge_mean_dollars\": %.4f, "
                 "\"crossable_net_edge_max_dollars\": %.4f, "
                 "\"crossable_profitable_updates\": %llu, "
+                "\"crossable_net_sweep_mean_dollars\": %.4f, "
+                "\"crossable_net_sweep_max_dollars\": %.4f, "
+                "\"crossable_sweepable_updates\": %llu, "
                 "\"stale_basis_samples\": %llu, "
                 "\"stalest_quote_seconds\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
@@ -275,6 +278,9 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.crossable_net_edge_mean_dollars,
                 e.crossable_net_edge_max_dollars,
                 u(e.crossable_profitable_updates),
+                e.crossable_net_sweep_mean_dollars,
+                e.crossable_net_sweep_max_dollars,
+                u(e.crossable_sweepable_updates),
                 u(e.stale_basis_samples), e.stalest_quote_seconds,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
@@ -415,6 +421,16 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     event.crossable_net_edge_max_dollars,
                     static_cast<unsigned long long>(
                         event.crossable_profitable_updates),
+                    static_cast<unsigned long long>(event.crossable_updates));
+        // The executable answer: of the whole crossed depth, only the
+        // fills that clear their own fee. What the gross sweep promised
+        // versus what a fee-aware taker keeps.
+        std::printf("           fee-aware optimal sweep mean $%.2f  "
+                    "max $%.2f -- %llu/%llu crossed updates worth taking\n",
+                    event.crossable_net_sweep_mean_dollars,
+                    event.crossable_net_sweep_max_dollars,
+                    static_cast<unsigned long long>(
+                        event.crossable_sweepable_updates),
                     static_cast<unsigned long long>(event.crossable_updates));
       }
     }
