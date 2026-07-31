@@ -230,3 +230,19 @@ TEST(CrossedSweepNet, PricesTheFeeOnTheKalshiLeg) {
   EXPECT_EQ(kalshi_rich.contracts, 10);
   EXPECT_EQ(kalshi_cheap.contracts, 10);
 }
+
+TEST(CrossedSweep, SaturatesOnCorruptSizes) {
+  // Level sizes saturate at int64 max on apply; the sweep math must
+  // survive being handed them instead of overflowing (UB). The gross
+  // sweep pins at the saturation ceiling; the net sweep stays a valid
+  // non-negative fill because the (capped) fee comes off the ceiling.
+  constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+  OrderBook rich, cheap;
+  rich.apply(delta(Side::Bid, 60, kMax));
+  cheap.apply(delta(Side::Ask, 40, kMax));
+  EXPECT_EQ(crossed_sweep_cents(rich, cheap), kMax);
+  const auto fill = crossed_sweep_net(rich, cheap, true);
+  EXPECT_GT(fill.net_cents, 0);
+  EXPECT_LE(fill.net_cents, kMax);
+  EXPECT_EQ(fill.contracts, kMax);
+}
