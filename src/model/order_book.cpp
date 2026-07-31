@@ -74,6 +74,26 @@ std::optional<double> OrderBook::mid() const {
   return (static_cast<double>(*bid) + static_cast<double>(*ask)) / 2.0;
 }
 
+namespace {
+
+// The sweep walks multiply level sizes by price gaps, and level sizes
+// saturate at int64 max upstream (OrderBook::apply) - a corrupt feed can
+// hand these loops absurd but representable sizes, and signed overflow is
+// undefined behavior. Saturate the per-fill edge and its accumulation the
+// same way the book saturates the sizes. diff is >= 1 inside the crossed
+// loop, so the division guard is safe.
+constexpr std::int64_t kSatMax = std::numeric_limits<std::int64_t>::max();
+
+std::int64_t sat_mul_edge(std::int64_t diff, std::int64_t matched) {
+  return matched > kSatMax / diff ? kSatMax : diff * matched;
+}
+
+std::int64_t sat_add(std::int64_t a, std::int64_t b) {
+  return a > kSatMax - b ? kSatMax : a + b;
+}
+
+}  // namespace
+
 std::int64_t crossed_sweep_cents(const OrderBook& rich, const OrderBook& cheap) {
   std::int64_t total = 0;
   auto bid = rich.bids_.begin();
@@ -83,7 +103,8 @@ std::int64_t crossed_sweep_cents(const OrderBook& rich, const OrderBook& cheap) 
   while (bid != rich.bids_.end() && ask != cheap.asks_.end() &&
          bid->first > ask->first) {
     const std::int64_t matched = std::min(bid_left, ask_left);
-    total += static_cast<std::int64_t>(bid->first - ask->first) * matched;
+    total = sat_add(total,
+                    sat_mul_edge(bid->first - ask->first, matched));
     bid_left -= matched;
     ask_left -= matched;
     if (bid_left == 0 && ++bid != rich.bids_.end()) bid_left = bid->second;
@@ -103,16 +124,15 @@ SweepFill crossed_sweep_net(const OrderBook& rich, const OrderBook& cheap,
          bid->first > ask->first) {
     const std::int64_t matched = std::min(bid_left, ask_left);
     const int kalshi_price = kalshi_is_rich ? bid->first : ask->first;
-    const std::int64_t gross =
-        static_cast<std::int64_t>(bid->first - ask->first) * matched;
+    const std::int64_t gross = sat_mul_edge(bid->first - ask->first, matched);
     const std::int64_t net =
         gross - kalshi_taker_fee_cents(matched, kalshi_price);
     // Each fill stands on its own: the fee's ceil means a deeper, larger
     // fill can still clear after a thin one at the same depth did not, so
     // a negative fill skips rather than stops the walk.
     if (net > 0) {
-      fill.net_cents += net;
-      fill.contracts += matched;
+      fill.net_cents = sat_add(fill.net_cents, net);
+      fill.contracts = sat_add(fill.contracts, matched);
     }
     bid_left -= matched;
     ask_left -= matched;

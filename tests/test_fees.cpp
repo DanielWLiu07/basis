@@ -2,6 +2,8 @@
 
 #include "model/fees.h"
 
+#include <limits>
+
 using basis::model::kalshi_taker_fee_cents;
 
 // Values checked by hand against the published formula
@@ -30,4 +32,16 @@ TEST(KalshiFees, DegenerateInputsAreFree) {
   EXPECT_EQ(kalshi_taker_fee_cents(-5, 50), 0);
   EXPECT_EQ(kalshi_taker_fee_cents(10, 0), 0);
   EXPECT_EQ(kalshi_taker_fee_cents(10, 100), 0);
+}
+
+TEST(KalshiFees, SaturatesInsteadOfOverflowing) {
+  // OrderBook::apply saturates corrupt level sizes at int64 max by design,
+  // and the touch/sweep contracts come straight from those sizes. The fee
+  // formula multiplies contracts by up to 7 * 2500, which overflows int64
+  // for contracts above ~5.3e14 - signed overflow, undefined behavior.
+  constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+  const auto fee = kalshi_taker_fee_cents(kMax, 50);
+  EXPECT_GT(fee, 0);
+  // Monotonicity survives the cap: more contracts never means less fee.
+  EXPECT_GE(fee, kalshi_taker_fee_cents(1'000'000, 50));
 }
