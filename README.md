@@ -121,7 +121,8 @@ zero message loss across the thread boundary is measured, not assumed:
 feed (Kalshi, Polymarket)  ->  normalize + match  ->  unified order book
                                                             |
                                                        analytics
-                                                  (divergence, lead-lag)
+                                        (divergence, lead-lag, crossed-book
+                                         economics net of venue fees)
                                                             |
                                           BLPAPI-style subscription API
 ```
@@ -187,6 +188,18 @@ every figure traces to one command. Recorded so far:
   the registry parser under ASan and UBSan, 100k executions per target
   per commit, 2M per target in local deep runs, zero findings in project
   code to date.
+- Crossable dislocations are priced as a ladder, each rung answering the
+  question the previous one raises: how often the books cross, how long
+  the episodes persist, how deep they run, what one taker order at the
+  touch captures, what sweeping the full crossed depth captures, and what
+  survives Kalshi's taker fee (ceil(0.07 * C * P * (1-P)), assumptions in
+  `src/model/fees.h`). On the synthetic session the ladder inverts the
+  headline: the gross sweep averages $1.13 per crossed update, but only
+  109 of 537 crossed updates survive fees (net at the touch: mean -$0.36),
+  while a taker free to decline losing fills keeps mean +$0.08, max
+  +$1.45. Crossable is not profitable; selective is. The fee and sweep
+  arithmetic saturates on corrupt sizes the same way the book does
+  (UBSan-verified), so a bad feed cannot poison the economics.
 - Venue integrity hashes are recomputed, not trusted: the parser rebuilds
   Polymarket's canonical book summary and checks its SHA-1 on every
   snapshot that carries the hashed fields, 13/13 verified with 0
