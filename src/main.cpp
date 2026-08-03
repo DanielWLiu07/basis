@@ -255,6 +255,13 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_net_sweep_mean_dollars\": %.4f, "
                 "\"crossable_net_sweep_max_dollars\": %.4f, "
                 "\"crossable_sweepable_updates\": %llu, "
+                "\"survival_open_mean_dollars\": %.4f, "
+                "\"survival_50ms_mean_dollars\": %.4f, "
+                "\"survival_50ms_episodes\": %llu, "
+                "\"survival_100ms_mean_dollars\": %.4f, "
+                "\"survival_100ms_episodes\": %llu, "
+                "\"survival_250ms_mean_dollars\": %.4f, "
+                "\"survival_250ms_episodes\": %llu, "
                 "\"stale_basis_samples\": %llu, "
                 "\"stalest_quote_seconds\": %.4f, "
                 "\"lead_lag\": {\"lead_seconds\": %.4f, \"correlation\": %.4f, "
@@ -281,6 +288,13 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.crossable_net_sweep_mean_dollars,
                 e.crossable_net_sweep_max_dollars,
                 u(e.crossable_sweepable_updates),
+                e.episode_net_sweep_after_mean_dollars[0],
+                e.episode_net_sweep_after_mean_dollars[1],
+                u(e.episodes_alive_after[1]),
+                e.episode_net_sweep_after_mean_dollars[2],
+                u(e.episodes_alive_after[2]),
+                e.episode_net_sweep_after_mean_dollars[3],
+                u(e.episodes_alive_after[3]),
                 u(e.stale_basis_samples), e.stalest_quote_seconds,
                 ll.lead_seconds, ll.correlation, u(ll.samples),
                 ll.ci_low_seconds, ll.ci_high_seconds, u(ll.resamples),
@@ -432,6 +446,23 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     static_cast<unsigned long long>(
                         event.crossable_sweepable_updates),
                     static_cast<unsigned long long>(event.crossable_updates));
+        // The time dimension of the same answer: what is still standing
+        // for a taker who needs 50/100/250 ms to react after an episode
+        // opens. Means are over all episodes, expired ones counting zero,
+        // so each figure is the expected edge at that reaction delay.
+        std::printf("           surviving a reaction delay: open $%.2f, "
+                    "50ms $%.2f (%llu/%llu eps), 100ms $%.2f (%llu/%llu), "
+                    "250ms $%.2f (%llu/%llu)\n",
+                    event.episode_net_sweep_after_mean_dollars[0],
+                    event.episode_net_sweep_after_mean_dollars[1],
+                    static_cast<unsigned long long>(event.episodes_alive_after[1]),
+                    static_cast<unsigned long long>(event.crossable_episodes),
+                    event.episode_net_sweep_after_mean_dollars[2],
+                    static_cast<unsigned long long>(event.episodes_alive_after[2]),
+                    static_cast<unsigned long long>(event.crossable_episodes),
+                    event.episode_net_sweep_after_mean_dollars[3],
+                    static_cast<unsigned long long>(event.episodes_alive_after[3]),
+                    static_cast<unsigned long long>(event.crossable_episodes));
       }
     }
     const auto& ll = event.lead_lag;

@@ -136,6 +136,23 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       ep.depth_max_cents = std::max(ep.depth_max_cents,
                                     static_cast<double>(depth));
       ep.edge_max_dollars = std::max(ep.edge_max_dollars, edge_dollars);
+      // Reaction-latency survival: the edge standing tau after the open
+      // is the value from the last update at or before that instant. The
+      // opening update fills tau = 0 with its own value; a later update
+      // crossing a tau boundary fills it with the value that was standing
+      // through the gap. Episodes that uncross first leave alive false.
+      const double net_sweep_dollars =
+          static_cast<double>(sweep_fill.net_cents) / 100.0;
+      for (int t = 0; t < ReplayStats::kReactionTaus; ++t) {
+        if (ep.alive_after[t]) continue;
+        if (delta.ts_ns - ep.start_ns >= ReplayStats::kReactionTauNs[t]) {
+          ep.alive_after[t] = true;
+          ep.net_sweep_after_dollars[t] =
+              ReplayStats::kReactionTauNs[t] == 0 ? net_sweep_dollars
+                                                  : ep.last_net_sweep_dollars;
+        }
+      }
+      ep.last_net_sweep_dollars = net_sweep_dollars;
     } else {
       ea.in_cross = false;
     }
@@ -271,6 +288,18 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       report.crossable_net_sweep_mean_dollars = ea.cross_net_sweep.mean();
       report.crossable_net_sweep_max_dollars = ea.cross_net_sweep.max();
       report.crossable_sweepable_updates = ea.sweepable_updates;
+      for (int t = 0; t < ReplayStats::kReactionTaus; ++t) {
+        std::uint64_t alive = 0;
+        double sum = 0.0;
+        for (const auto& ep : ea.episodes) {
+          if (ep.alive_after[t]) ++alive;
+          sum += ep.net_sweep_after_dollars[t];  // expired episodes add 0
+        }
+        report.episodes_alive_after[t] = alive;
+        report.episode_net_sweep_after_mean_dollars[t] =
+            ea.episodes.empty() ? 0.0
+                                : sum / static_cast<double>(ea.episodes.size());
+      }
     }
     report.episodes = ea.episodes;
     report.stale_basis_samples = ea.stale_basis_samples;

@@ -60,12 +60,28 @@ struct ReplayStats {
   // One crossed run, first to last crossed update. The aggregate episode
   // counters answer "how often and how long"; keeping each episode lets a
   // consumer see the distribution instead of just count/longest.
+  // Reaction-latency ladder for episode survival: how much fee-aware
+  // optimal sweep is still there for a taker who needs this long to react
+  // after an episode opens. Index 0 is "at the open".
+  static constexpr int kReactionTaus = 4;
+  static constexpr std::int64_t kReactionTauNs[kReactionTaus] = {
+      0, 50'000'000, 100'000'000, 250'000'000};
+
   struct CrossedEpisode {
     std::int64_t start_ns = 0;
     std::int64_t end_ns = 0;  // last crossed update; single-update span is 0
     std::uint64_t updates = 0;
     double depth_max_cents = 0.0;
     double edge_max_dollars = 0.0;
+    // Fee-aware optimal sweep still standing kReactionTauNs[i] after the
+    // open: the value as of the last update at or before that instant
+    // (books only change on updates, so the standing edge between updates
+    // is the previous update's). alive[i] false means the episode
+    // uncrossed before tau ever arrived - the opportunity was gone.
+    double net_sweep_after_dollars[kReactionTaus] = {0.0, 0.0, 0.0, 0.0};
+    bool   alive_after[kReactionTaus] = {false, false, false, false};
+    // Running value for the fill logic above; not part of the report.
+    double last_net_sweep_dollars = 0.0;
   };
 
   struct EventReport {
@@ -130,6 +146,14 @@ struct ReplayStats {
     double crossable_net_sweep_mean_dollars = 0.0;
     double crossable_net_sweep_max_dollars = 0.0;
     std::uint64_t crossable_sweepable_updates = 0;
+    // Reaction-latency survival, aggregated over episodes: how many
+    // episodes were still crossed kReactionTauNs[i] after opening, and
+    // the mean optimal sweep still standing then - averaged over ALL
+    // episodes with expired ones contributing zero, so it reads as the
+    // expected edge for a taker with that reaction delay.
+    std::uint64_t episodes_alive_after[kReactionTaus] = {0, 0, 0, 0};
+    double episode_net_sweep_after_mean_dollars[kReactionTaus] =
+        {0.0, 0.0, 0.0, 0.0};
     // Freshness of the basis: a sample priced while the *other* venue had
     // not updated for more than kStaleQuoteNs is built on a stale quote
     // and says little about the live gap. Counted against basis_samples,

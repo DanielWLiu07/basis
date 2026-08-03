@@ -200,6 +200,18 @@ TEST(ReplayHarness, CountsDistinctCrossedEpisodesAndTheirSpan) {
   EXPECT_NEAR(event.crossable_net_sweep_max_dollars, 0.02, 1e-9);
   EXPECT_NEAR(event.crossable_net_sweep_mean_dollars, 0.04 / 3.0, 1e-9);
 
+  // Both episodes here live on a nanosecond scale, so every reaction rung
+  // beyond "at the open" expires: alive counts drop to zero and the
+  // expected surviving edge with them. At the open, episode one's only
+  // fill is fee-eaten (declined, $0) while episode two opens at +$0.02.
+  EXPECT_EQ(event.episodes_alive_after[0], 2u);
+  EXPECT_NEAR(event.episode_net_sweep_after_mean_dollars[0], 0.01, 1e-9);
+  for (int t = 1; t < basis::bench::ReplayStats::kReactionTaus; ++t) {
+    EXPECT_EQ(event.episodes_alive_after[t], 0u) << "tau index " << t;
+    EXPECT_NEAR(event.episode_net_sweep_after_mean_dollars[t], 0.0, 1e-9)
+        << "tau index " << t;
+  }
+
   // The per-episode records carry the distribution behind those
   // aggregates, in time order and consistent with them.
   ASSERT_EQ(event.episodes.size(), event.crossable_episodes);
@@ -357,6 +369,66 @@ TEST(ReplaySummary, EqualEdgesRankDeterministicallyById) {
 
 // Two crossed bid levels against one deep ask: the touch edge sees only the
 // best levels, the sweep walks the whole crossed depth.
+// Timestamps here are realistic (tens to hundreds of ms) so the
+// reaction-latency ladder actually has boundaries to cross. The edge
+// standing at tau is the value from the last update at or before that
+// instant, not the next one.
+TEST(ReplayHarness, ReactionDelaySurvivalUsesTheStandingEdge) {
+  const auto reg = make_registry();
+  const auto path = testing::TempDir() + "survival.feedlog";
+  constexpr std::int64_t kT0 = 1'000'000'000;    // uncrossed two-sided base
+  constexpr std::int64_t kOpen = kT0 + 20'000'000;
+  {
+    std::ofstream out(path);
+    out << kT0 << "\tkalshi\t"
+        << R"({"type":"orderbook_snapshot","sid":1,"seq":5,"msg":{)"
+        << R"("market_ticker":"FED-26SEP-CUT","yes":[[45,100]],"no":[[53,60]]}})"
+        << "\n";
+    out << (kT0 + 10'000'000) << "\tpolymarket\t"
+        << R"({"event_type":"book","asset_id":"7132107","market":"0xabc",)"
+        << R"("bids":[{"price":"0.44","size":"90"}],)"
+        << R"("asks":[{"price":"0.46","size":"70"}]})"
+        << "\n";
+    // Open: 48 bid crosses the 46 ask. Optimal sweep nets 20c - 18c fee.
+    out << kOpen << "\tkalshi\t"
+        << R"({"type":"orderbook_delta","sid":1,"seq":6,"msg":{)"
+        << R"("market_ticker":"FED-26SEP-CUT","price":48,"delta":10,"side":"yes"}})"
+        << "\n";
+    // +60ms: a 49 bid deepens the cross; optimal sweep is now 12c + 2c.
+    out << (kOpen + 60'000'000) << "\tkalshi\t"
+        << R"({"type":"orderbook_delta","sid":1,"seq":7,"msg":{)"
+        << R"("market_ticker":"FED-26SEP-CUT","price":49,"delta":10,"side":"yes"}})"
+        << "\n";
+    // +120ms and +300ms: deep bids tick without changing the cross, so
+    // the standing value carries across the 100ms and 250ms boundaries.
+    out << (kOpen + 120'000'000) << "\tkalshi\t"
+        << R"({"type":"orderbook_delta","sid":1,"seq":8,"msg":{)"
+        << R"("market_ticker":"FED-26SEP-CUT","price":30,"delta":5,"side":"yes"}})"
+        << "\n";
+    out << (kOpen + 300'000'000) << "\tkalshi\t"
+        << R"({"type":"orderbook_delta","sid":1,"seq":9,"msg":{)"
+        << R"("market_ticker":"FED-26SEP-CUT","price":31,"delta":5,"side":"yes"}})"
+        << "\n";
+  }
+  ReplayHarness harness(reg);
+  const auto stats = harness.run(path);
+  ASSERT_TRUE(stats.has_value());
+  ASSERT_EQ(stats->events.size(), 1u);
+  const auto& event = stats->events[0];
+  ASSERT_EQ(event.crossable_episodes, 1u);
+  // Alive at every rung: the episode outlives 250ms.
+  for (int t = 0; t < basis::bench::ReplayStats::kReactionTaus; ++t) {
+    EXPECT_EQ(event.episodes_alive_after[t], 1u) << "tau index " << t;
+  }
+  // At the open the sweep nets $0.02; that value stands through the 50ms
+  // boundary (the deepening at +60ms comes after it); the deepened $0.14
+  // stands at 100ms and 250ms.
+  EXPECT_NEAR(event.episode_net_sweep_after_mean_dollars[0], 0.02, 1e-9);
+  EXPECT_NEAR(event.episode_net_sweep_after_mean_dollars[1], 0.02, 1e-9);
+  EXPECT_NEAR(event.episode_net_sweep_after_mean_dollars[2], 0.14, 1e-9);
+  EXPECT_NEAR(event.episode_net_sweep_after_mean_dollars[3], 0.14, 1e-9);
+}
+
 TEST(ReplayHarness, SweepEdgeWalksPastTheTouch) {
   const auto reg = make_registry();
   const auto path = testing::TempDir() + "sweep.feedlog";
