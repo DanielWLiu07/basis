@@ -60,7 +60,8 @@ int usage() {
       "      vs downstream (a separate profiling run, not the headline);\n"
       "      --json prints one machine-readable object and nothing else;\n"
       "      --csv <file> writes the api-layer stream as long-format rows\n"
-      "      --episodes-csv <file> writes one row per crossed episode\n"
+      "      --episodes-csv <file> one row per crossed episode, incl. the\n"
+      "                            surviving sweep at open/50/100/250 ms\n"
       "      (recv_ns,event_id,field,value) for plotting\n"
 #ifdef BASIS_HAS_NET
       "\n"
@@ -670,19 +671,36 @@ int run_replay(const std::vector<std::string_view>& args) {
                         episodes_csv_path);
       return 1;
     }
+    // The four survival columns carry the reaction-latency ladder per
+    // episode: the fee-aware optimal sweep standing at the open and at
+    // 50/100/250 ms after it, empty when the episode expired before the
+    // rung (an empty cell is "the opportunity was gone", distinct from a
+    // standing value of 0.00).
     ep_csv << "event_id,start_ns,end_ns,duration_ms,updates,"
-              "depth_max_cents,edge_max_dollars\n";
-    char row[256];
+              "depth_max_cents,edge_max_dollars,"
+              "sweep_open_dollars,sweep_50ms_dollars,"
+              "sweep_100ms_dollars,sweep_250ms_dollars\n";
+    char row[320];
     for (const auto& event : stats->events) {
       for (const auto& ep : event.episodes) {
-        std::snprintf(row, sizeof(row), "%s,%lld,%lld,%.4f,%llu,%.2f,%.2f\n",
+        int n = std::snprintf(row, sizeof(row),
+                      "%s,%lld,%lld,%.4f,%llu,%.2f,%.2f",
                       event.event_id.c_str(),
                       static_cast<long long>(ep.start_ns),
                       static_cast<long long>(ep.end_ns),
                       static_cast<double>(ep.end_ns - ep.start_ns) / 1e6,
                       static_cast<unsigned long long>(ep.updates),
                       ep.depth_max_cents, ep.edge_max_dollars);
-        ep_csv << row;
+        for (int t = 0; t < basis::bench::ReplayStats::kReactionTaus; ++t) {
+          if (ep.alive_after[t]) {
+            n += std::snprintf(row + n, sizeof(row) - static_cast<std::size_t>(n),
+                               ",%.2f", ep.net_sweep_after_dollars[t]);
+          } else {
+            n += std::snprintf(row + n, sizeof(row) - static_cast<std::size_t>(n),
+                               ",");
+          }
+        }
+        ep_csv << row << "\n";
       }
     }
   }
