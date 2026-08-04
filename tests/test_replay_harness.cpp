@@ -316,6 +316,10 @@ TEST(ReplaySummary, TotalsRankingAndTruncation) {
     e.crossable_longest_ns = longest_ns;
     e.crossable_edge_mean_dollars = edge_mean;
     e.crossable_edge_max_dollars = edge_max;
+    // Distinct survival values per event so the copy into RankedEvent is
+    // pinned (index 2 = the 100 ms rung).
+    e.episode_net_sweep_after_mean_dollars[2] = edge_mean / 2.0;
+    e.episodes_alive_after[2] = episodes;
     stats.events.push_back(std::move(e));
   };
 
@@ -340,6 +344,11 @@ TEST(ReplaySummary, TotalsRankingAndTruncation) {
   EXPECT_DOUBLE_EQ(s.top_by_edge[0].edge_max_dollars, 1.20);
   EXPECT_EQ(s.top_by_edge[0].crossable_updates, 4u);
   EXPECT_EQ(s.top_by_edge[0].crossable_longest_ns, 1'000'000);
+  // The executability columns ride along with the ranking untouched.
+  EXPECT_DOUBLE_EQ(s.top_by_edge[0].surviving_100ms_mean_dollars, 0.40);
+  EXPECT_EQ(s.top_by_edge[0].episodes_alive_100ms, 1u);
+  EXPECT_DOUBLE_EQ(s.top_by_edge[1].surviving_100ms_mean_dollars, 0.15);
+  EXPECT_EQ(s.top_by_edge[1].episodes_alive_100ms, 2u);
 
   // top_n caps the list after ranking, so the best event survives the cut.
   const auto top1 = basis::bench::summarize(stats, 1);
