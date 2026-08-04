@@ -40,6 +40,12 @@
 
 namespace {
 
+// printf's %llu wants unsigned long long; our counters are uint64_t. One
+// short name instead of a 40-character cast at every use site.
+unsigned long long u(std::uint64_t v) {
+  return static_cast<unsigned long long>(v);
+}
+
 int usage() {
   std::printf(
       "basis %s - cross-venue prediction-market data engine\n"
@@ -60,9 +66,9 @@ int usage() {
       "      vs downstream (a separate profiling run, not the headline);\n"
       "      --json prints one machine-readable object and nothing else;\n"
       "      --csv <file> writes the api-layer stream as long-format rows\n"
+      "                   (recv_ns,event_id,field,value) for plotting\n"
       "      --episodes-csv <file> one row per crossed episode, incl. the\n"
       "                            surviving sweep at open/50/100/250 ms\n"
-      "      (recv_ns,event_id,field,value) for plotting\n"
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
@@ -157,13 +163,58 @@ int run_synth(const std::vector<std::string_view>& args) {
 // Machine-readable replay results, for the CI perf gate and any other
 // consumer that should not scrape human text. Event ids come from the
 // registry and are kebab-case, so they need no JSON escaping. Allocation
+// Writes one row per crossed run, in time order: the distribution behind
+// the report's count/longest aggregates, ready for a histogram of how
+// long dislocations persist and what they were worth. Sits beside the
+// other two report emitters (print_stats, print_stats_json).
+bool write_episodes_csv(const std::string& path,
+                        const basis::bench::ReplayStats& stats) {
+  {
+    std::ofstream ep_csv(path, std::ios::trunc);
+    if (!ep_csv) {
+      basis::log::error("cannot open --episodes-csv file: " + path);
+      return false;
+    }
+    // The four survival columns carry the reaction-latency ladder per
+    // episode: the fee-aware optimal sweep standing at the open and at
+    // 50/100/250 ms after it, empty when the episode expired before the
+    // rung (an empty cell is "the opportunity was gone", distinct from a
+    // standing value of 0.00).
+    ep_csv << "event_id,start_ns,end_ns,duration_ms,updates,"
+              "depth_max_cents,edge_max_dollars,"
+              "sweep_open_dollars,sweep_50ms_dollars,"
+              "sweep_100ms_dollars,sweep_250ms_dollars\n";
+    char row[320];
+    for (const auto& event : stats.events) {
+      for (const auto& ep : event.episodes) {
+        int n = std::snprintf(row, sizeof(row),
+                      "%s,%lld,%lld,%.4f,%llu,%.2f,%.2f",
+                      event.event_id.c_str(),
+                      static_cast<long long>(ep.start_ns),
+                      static_cast<long long>(ep.end_ns),
+                      static_cast<double>(ep.end_ns - ep.start_ns) / 1e6,
+                      u(ep.updates),
+                      ep.depth_max_cents, ep.edge_max_dollars);
+        for (int t = 0; t < basis::bench::ReplayStats::kReactionTaus; ++t) {
+          if (ep.alive_after[t]) {
+            n += std::snprintf(row + n, sizeof(row) - static_cast<std::size_t>(n),
+                               ",%.2f", ep.net_sweep_after_dollars[t]);
+          } else {
+            n += std::snprintf(row + n, sizeof(row) - static_cast<std::size_t>(n),
+                               ",");
+          }
+        }
+        ep_csv << row << "\n";
+      }
+    }
+  }
+  return true;
+}
+
 // fields are emitted only in --alloc count mode (negative when absent).
 void print_stats_json(const basis::bench::ReplayStats& stats,
                       double parse_per_msg, double parse_bytes_per_msg,
                       double book_per_msg) {
-  const auto u = [](std::uint64_t v) {
-    return static_cast<unsigned long long>(v);
-  };
   const double rps = stats.pipeline_ns > 0
       ? static_cast<double>(stats.records) * 1e9 /
             static_cast<double>(stats.pipeline_ns)
@@ -312,9 +363,9 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
 
 void print_stats(const basis::bench::ReplayStats& stats) {
   std::printf("records   %llu (kalshi %llu, polymarket %llu)\n",
-              static_cast<unsigned long long>(stats.records),
-              static_cast<unsigned long long>(stats.kalshi_messages),
-              static_cast<unsigned long long>(stats.polymarket_messages));
+              u(stats.records),
+              u(stats.kalshi_messages),
+              u(stats.polymarket_messages));
   const double span_s =
       static_cast<double>(stats.last_recv_ns - stats.first_recv_ns) / 1e9;
   if (span_s > 0.0) {
@@ -322,22 +373,22 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                 static_cast<double>(stats.records) / span_s);
   }
   std::printf("deltas    %llu applied, %llu unmapped\n",
-              static_cast<unsigned long long>(stats.deltas),
-              static_cast<unsigned long long>(stats.unmapped_deltas));
+              u(stats.deltas),
+              u(stats.unmapped_deltas));
   std::printf("dropped   %llu malformed msgs, %llu bad lines, "
               "%llu gaps, %llu ignored\n",
-              static_cast<unsigned long long>(stats.malformed),
-              static_cast<unsigned long long>(stats.malformed_lines),
-              static_cast<unsigned long long>(stats.gaps),
-              static_cast<unsigned long long>(stats.ignored));
+              u(stats.malformed),
+              u(stats.malformed_lines),
+              u(stats.gaps),
+              u(stats.ignored));
   if (stats.hashes_verified + stats.hashes_mismatched +
           stats.hashes_unverifiable >
       0) {
     std::printf("integrity %llu snapshot hashes verified, %llu mismatched, "
                 "%llu unverifiable (refresh form)\n",
-                static_cast<unsigned long long>(stats.hashes_verified),
-                static_cast<unsigned long long>(stats.hashes_mismatched),
-                static_cast<unsigned long long>(stats.hashes_unverifiable));
+                u(stats.hashes_verified),
+                u(stats.hashes_mismatched),
+                u(stats.hashes_unverifiable));
   }
 
   const auto& lat = stats.latency;
@@ -359,7 +410,7 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                 "last %+.2fc  (%llu samples)\n",
                 event.basis_mean, event.basis_stddev, event.basis_min,
                 event.basis_max, event.basis_last,
-                static_cast<unsigned long long>(event.basis_samples));
+                u(event.basis_samples));
     if (event.basis_stddev > 0.0) {
       // How far the latest basis sits from the session mean, in standard
       // deviations: a quick read on whether the cross-venue gap is
@@ -385,7 +436,7 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                          static_cast<double>(event.basis_samples);
       std::printf("           %llu samples (%.1f%%) priced on a >5s-old quote, "
                   "stalest %.1fs\n",
-                  static_cast<unsigned long long>(event.stale_basis_samples),
+                  u(event.stale_basis_samples),
                   pct, event.stalest_quote_seconds);
     }
     // Bid-ask spread per venue, and whether the basis actually clears it: a
@@ -407,14 +458,14 @@ void print_stats(const basis::bench::ReplayStats& stats) {
       const double pct = 100.0 * static_cast<double>(event.crossable_updates) /
                          static_cast<double>(event.two_sided_updates);
       std::printf("  arb      %llu/%llu two-sided updates crossable (%.2f%%)\n",
-                  static_cast<unsigned long long>(event.crossable_updates),
-                  static_cast<unsigned long long>(event.two_sided_updates), pct);
+                  u(event.crossable_updates),
+                  u(event.two_sided_updates), pct);
       // Persistence: how long the books stay crossed once they cross. The
       // longest run is the widest window an execution engine had to act.
       if (event.crossable_episodes > 0) {
         std::printf("           %llu crossed episode%s, longest held %.1f ms, "
                     "depth mean %.1fc max %.0fc\n",
-                    static_cast<unsigned long long>(event.crossable_episodes),
+                    u(event.crossable_episodes),
                     event.crossable_episodes == 1 ? "" : "s",
                     static_cast<double>(event.crossable_longest_ns) / 1e6,
                     event.crossable_depth_mean, event.crossable_depth_max);
@@ -437,9 +488,9 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     "max $%+.2f -- %llu/%llu crossed updates profitable\n",
                     event.crossable_net_edge_mean_dollars,
                     event.crossable_net_edge_max_dollars,
-                    static_cast<unsigned long long>(
+                    u(
                         event.crossable_profitable_updates),
-                    static_cast<unsigned long long>(event.crossable_updates));
+                    u(event.crossable_updates));
         // The executable answer: of the whole crossed depth, only the
         // fills that clear their own fee. What the gross sweep promised
         // versus what a fee-aware taker keeps.
@@ -447,9 +498,9 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     "max $%.2f -- %llu/%llu crossed updates worth taking\n",
                     event.crossable_net_sweep_mean_dollars,
                     event.crossable_net_sweep_max_dollars,
-                    static_cast<unsigned long long>(
+                    u(
                         event.crossable_sweepable_updates),
-                    static_cast<unsigned long long>(event.crossable_updates));
+                    u(event.crossable_updates));
         // The time dimension of the same answer: what is still standing
         // for a taker who needs 50/100/250 ms to react after an episode
         // opens. Means are over all episodes, expired ones counting zero,
@@ -459,14 +510,14 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     "250ms $%.2f (%llu/%llu)\n",
                     event.episode_net_sweep_after_mean_dollars[0],
                     event.episode_net_sweep_after_mean_dollars[1],
-                    static_cast<unsigned long long>(event.episodes_alive_after[1]),
-                    static_cast<unsigned long long>(event.crossable_episodes),
+                    u(event.episodes_alive_after[1]),
+                    u(event.crossable_episodes),
                     event.episode_net_sweep_after_mean_dollars[2],
-                    static_cast<unsigned long long>(event.episodes_alive_after[2]),
-                    static_cast<unsigned long long>(event.crossable_episodes),
+                    u(event.episodes_alive_after[2]),
+                    u(event.crossable_episodes),
                     event.episode_net_sweep_after_mean_dollars[3],
-                    static_cast<unsigned long long>(event.episodes_alive_after[3]),
-                    static_cast<unsigned long long>(event.crossable_episodes));
+                    u(event.episodes_alive_after[3]),
+                    u(event.crossable_episodes));
       }
     }
     const auto& ll = event.lead_lag;
@@ -479,12 +530,12 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   leader,
                   ll.lead_seconds >= 0 ? ll.lead_seconds : -ll.lead_seconds,
                   ll.correlation,
-                  static_cast<unsigned long long>(ll.samples));
+                  u(ll.samples));
       if (ll.resamples > 0) {
         std::printf("           95%% ci %.3fs..%.3fs "
                     "(%llu block-bootstrap resamples) -- %s\n",
                     ll.ci_low_seconds, ll.ci_high_seconds,
-                    static_cast<unsigned long long>(ll.resamples),
+                    u(ll.resamples),
                     ll.lead_is_significant()
                         ? "significant (interval excludes zero)"
                         : "not significant (interval spans zero)");
@@ -495,11 +546,11 @@ void print_stats(const basis::bench::ReplayStats& stats) {
       std::printf("  events   kalshi moves: %llu/%llu followed by "
                   "polymarket, median %.3fs  |  reverse: %llu/%llu, "
                   "median %.3fs\n",
-                  static_cast<unsigned long long>(es.followed),
-                  static_cast<unsigned long long>(es.moves),
+                  u(es.followed),
+                  u(es.moves),
                   es.median_follow_seconds,
-                  static_cast<unsigned long long>(es.reverse_followed),
-                  static_cast<unsigned long long>(es.reverse_moves),
+                  u(es.reverse_followed),
+                  u(es.reverse_moves),
                   es.reverse_median_follow_seconds);
       // Turn the four counts into a verdict: does one venue's moves get
       // answered significantly more than the other's?
@@ -542,14 +593,14 @@ void print_stats(const basis::bench::ReplayStats& stats) {
     const auto s = basis::bench::summarize(stats);
     std::printf("\nsummary  %llu events tracked, %llu with overlap, "
                 "%llu crossable\n",
-                static_cast<unsigned long long>(s.events_tracked),
-                static_cast<unsigned long long>(s.events_with_overlap),
-                static_cast<unsigned long long>(s.events_crossable));
+                u(s.events_tracked),
+                u(s.events_with_overlap),
+                u(s.events_crossable));
     std::printf("         %llu basis samples, %llu crossable updates in "
                 "%llu episodes\n",
-                static_cast<unsigned long long>(s.basis_samples),
-                static_cast<unsigned long long>(s.crossable_updates),
-                static_cast<unsigned long long>(s.crossable_episodes));
+                u(s.basis_samples),
+                u(s.crossable_updates),
+                u(s.crossable_episodes));
     for (std::size_t i = 0; i < s.top_by_edge.size(); ++i) {
       const auto& r = s.top_by_edge[i];
       std::printf("         %s %s  edge max $%.2f mean $%.2f  "
@@ -557,11 +608,11 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                   "$%.2f survives 100ms in %llu)\n",
                   i == 0 ? "best edge" : "         ", r.event_id.c_str(),
                   r.edge_max_dollars, r.edge_mean_dollars,
-                  static_cast<unsigned long long>(r.crossable_updates),
-                  static_cast<unsigned long long>(r.crossable_episodes),
+                  u(r.crossable_updates),
+                  u(r.crossable_episodes),
                   static_cast<double>(r.crossable_longest_ns) / 1e6,
                   r.surviving_100ms_mean_dollars,
-                  static_cast<unsigned long long>(r.episodes_alive_100ms));
+                  u(r.episodes_alive_100ms));
     }
   }
 }
@@ -667,48 +718,9 @@ int run_replay(const std::vector<std::string_view>& args) {
     return 1;
   }
 
-  // --episodes-csv writes one row per crossed run, in time order: the
-  // distribution behind the report's count/longest aggregates, ready for
-  // a histogram of how long dislocations persist and what they were worth.
-  if (!episodes_csv_path.empty()) {
-    std::ofstream ep_csv(episodes_csv_path, std::ios::trunc);
-    if (!ep_csv) {
-      basis::log::error("cannot open --episodes-csv file: " +
-                        episodes_csv_path);
-      return 1;
-    }
-    // The four survival columns carry the reaction-latency ladder per
-    // episode: the fee-aware optimal sweep standing at the open and at
-    // 50/100/250 ms after it, empty when the episode expired before the
-    // rung (an empty cell is "the opportunity was gone", distinct from a
-    // standing value of 0.00).
-    ep_csv << "event_id,start_ns,end_ns,duration_ms,updates,"
-              "depth_max_cents,edge_max_dollars,"
-              "sweep_open_dollars,sweep_50ms_dollars,"
-              "sweep_100ms_dollars,sweep_250ms_dollars\n";
-    char row[320];
-    for (const auto& event : stats->events) {
-      for (const auto& ep : event.episodes) {
-        int n = std::snprintf(row, sizeof(row),
-                      "%s,%lld,%lld,%.4f,%llu,%.2f,%.2f",
-                      event.event_id.c_str(),
-                      static_cast<long long>(ep.start_ns),
-                      static_cast<long long>(ep.end_ns),
-                      static_cast<double>(ep.end_ns - ep.start_ns) / 1e6,
-                      static_cast<unsigned long long>(ep.updates),
-                      ep.depth_max_cents, ep.edge_max_dollars);
-        for (int t = 0; t < basis::bench::ReplayStats::kReactionTaus; ++t) {
-          if (ep.alive_after[t]) {
-            n += std::snprintf(row + n, sizeof(row) - static_cast<std::size_t>(n),
-                               ",%.2f", ep.net_sweep_after_dollars[t]);
-          } else {
-            n += std::snprintf(row + n, sizeof(row) - static_cast<std::size_t>(n),
-                               ",");
-          }
-        }
-        ep_csv << row << "\n";
-      }
-    }
+  if (!episodes_csv_path.empty() &&
+      !write_episodes_csv(episodes_csv_path, *stats)) {
+    return 1;
   }
 
   // JSON mode prints one machine-readable object and nothing else, so a
@@ -734,7 +746,7 @@ int run_replay(const std::vector<std::string_view>& args) {
 
   std::printf("\npipeline  %.1f ms for %llu records (%.0fk records/sec)\n",
               static_cast<double>(stats->pipeline_ns) / 1e6,
-              static_cast<unsigned long long>(stats->records),
+              u(stats->records),
               stats->pipeline_ns > 0
                   ? static_cast<double>(stats->records) * 1e6 /
                         static_cast<double>(stats->pipeline_ns)
@@ -744,10 +756,10 @@ int run_replay(const std::vector<std::string_view>& args) {
     const double n = static_cast<double>(stats->records);
     std::printf("allocs    parse %llu (%.1f/msg, %.0f B/msg), "
                 "books %llu (%.1f/msg)\n",
-                static_cast<unsigned long long>(parse.allocations()),
+                u(parse.allocations()),
                 static_cast<double>(parse.allocations()) / n,
                 static_cast<double>(parse.bytes()) / n,
-                static_cast<unsigned long long>(counting_books.allocations()),
+                u(counting_books.allocations()),
                 static_cast<double>(counting_books.allocations()) / n);
   }
   if (breakdown) {
@@ -765,7 +777,7 @@ int run_replay(const std::vector<std::string_view>& args) {
                       static_cast<double>(stats->records),
                   static_cast<double>(stats->downstream_ns_total) /
                       static_cast<double>(stats->records),
-                  static_cast<unsigned long long>(stats->records));
+                  u(stats->records));
     }
   }
   return 0;
@@ -881,16 +893,16 @@ int run_record(const std::vector<std::string_view>& args) {
     if (now >= next_report) {
       next_report += std::chrono::seconds(5);
       std::printf("  poly %llu msgs %llu deltas %llu malformed %llu recon",
-                  static_cast<unsigned long long>(poly_feed.messages()),
-                  static_cast<unsigned long long>(poly_feed.deltas()),
-                  static_cast<unsigned long long>(poly_feed.malformed()),
-                  static_cast<unsigned long long>(poly_feed.reconnects()));
+                  u(poly_feed.messages()),
+                  u(poly_feed.deltas()),
+                  u(poly_feed.malformed()),
+                  u(poly_feed.reconnects()));
       if (kalshi_feed) {
         std::printf("  |  kalshi %llu msgs %llu deltas %llu gaps %llu recon",
-                    static_cast<unsigned long long>(kalshi_feed->messages()),
-                    static_cast<unsigned long long>(kalshi_feed->deltas()),
-                    static_cast<unsigned long long>(kalshi_feed->gaps()),
-                    static_cast<unsigned long long>(
+                    u(kalshi_feed->messages()),
+                    u(kalshi_feed->deltas()),
+                    u(kalshi_feed->gaps()),
+                    u(
                         kalshi_feed->reconnects()));
       }
       std::printf("\n");
@@ -900,21 +912,21 @@ int run_record(const std::vector<std::string_view>& args) {
   if (kalshi_feed) kalshi_feed->stop();
 
   std::printf("wrote %llu records to %s (%llu rejected)\n",
-              static_cast<unsigned long long>(written.load()),
+              u(written.load()),
               out_path.c_str(),
-              static_cast<unsigned long long>(rejected.load()));
+              u(rejected.load()));
   std::printf("  polymarket: %llu malformed, %llu reconnects, "
               "%llu hashes verified, %llu mismatched\n",
-              static_cast<unsigned long long>(poly_feed.malformed()),
-              static_cast<unsigned long long>(poly_feed.reconnects()),
-              static_cast<unsigned long long>(poly_feed.hashes_verified()),
-              static_cast<unsigned long long>(
+              u(poly_feed.malformed()),
+              u(poly_feed.reconnects()),
+              u(poly_feed.hashes_verified()),
+              u(
                   poly_feed.hashes_mismatched()));
   if (kalshi_feed) {
     std::printf("  kalshi: %llu malformed, %llu gaps, %llu reconnects\n",
-                static_cast<unsigned long long>(kalshi_feed->malformed()),
-                static_cast<unsigned long long>(kalshi_feed->gaps()),
-                static_cast<unsigned long long>(kalshi_feed->reconnects()));
+                u(kalshi_feed->malformed()),
+                u(kalshi_feed->gaps()),
+                u(kalshi_feed->reconnects()));
   }
   std::printf("replay it:  basis replay %s --config %s\n", out_path.c_str(),
               config_path.c_str());
@@ -952,8 +964,8 @@ class LiveAnalytics {
   void print_snapshot() {
     const std::lock_guard<std::mutex> lock(mutex_);
     std::printf("-- %llu deltas, %llu unmapped\n",
-                static_cast<unsigned long long>(deltas_),
-                static_cast<unsigned long long>(
+                u(deltas_),
+                u(
                     normalizer_.unmapped_deltas()));
     for (const auto& [event_id, ev] : events_) {
       if (ev.kalshi_mid && ev.poly_mid) {
@@ -983,7 +995,7 @@ class LiveAnalytics {
                   "last %+.2fc  (%llu samples)\n",
                   ev.divergence.mean(), ev.divergence.min(),
                   ev.divergence.max(), ev.divergence.last(),
-                  static_cast<unsigned long long>(ev.divergence.samples()));
+                  u(ev.divergence.samples()));
       const auto ll = ev.lead_lag.estimate();
       if (ll.correlation > 0.0) {
         const char* leader = ll.lead_seconds >= 0 ? "kalshi" : "polymarket";
@@ -992,7 +1004,7 @@ class LiveAnalytics {
                     leader,
                     ll.lead_seconds >= 0 ? ll.lead_seconds : -ll.lead_seconds,
                     ll.correlation,
-                    static_cast<unsigned long long>(ll.samples));
+                    u(ll.samples));
       }
     }
   }
@@ -1095,25 +1107,25 @@ int run_live(const std::vector<std::string_view>& args) {
   analytics.print_final_report();
   std::printf("\nqueue     %llu in, %llu out, high water %zu, "
               "%llu blocked pushes\n",
-              static_cast<unsigned long long>(queue.pushed()),
-              static_cast<unsigned long long>(queue.popped()),
+              u(queue.pushed()),
+              u(queue.popped()),
               queue.high_water(),
-              static_cast<unsigned long long>(queue.blocked_pushes()));
+              u(queue.blocked_pushes()));
   std::printf("feeds     poly %llu msgs %llu malformed %llu reconnects "
               "%llu hashes ok %llu mismatched",
-              static_cast<unsigned long long>(poly_feed.messages()),
-              static_cast<unsigned long long>(poly_feed.malformed()),
-              static_cast<unsigned long long>(poly_feed.reconnects()),
-              static_cast<unsigned long long>(poly_feed.hashes_verified()),
-              static_cast<unsigned long long>(
+              u(poly_feed.messages()),
+              u(poly_feed.malformed()),
+              u(poly_feed.reconnects()),
+              u(poly_feed.hashes_verified()),
+              u(
                   poly_feed.hashes_mismatched()));
   if (kalshi_feed) {
     std::printf("  |  kalshi %llu msgs %llu malformed %llu gaps "
                 "%llu reconnects",
-                static_cast<unsigned long long>(kalshi_feed->messages()),
-                static_cast<unsigned long long>(kalshi_feed->malformed()),
-                static_cast<unsigned long long>(kalshi_feed->gaps()),
-                static_cast<unsigned long long>(kalshi_feed->reconnects()));
+                u(kalshi_feed->messages()),
+                u(kalshi_feed->malformed()),
+                u(kalshi_feed->gaps()),
+                u(kalshi_feed->reconnects()));
   }
   std::printf("\n");
   return 0;
