@@ -43,6 +43,7 @@ printf '%s\n\n' "$report"
 # on every CI runner; no jq dependency.
 read -r lead corr krps parse_per_msg books_per_msg malformed bad_lines gaps \
        confirmed follow_z agree consensus_kalshi \
+       surv_alive_monotone surv_alive_bounded surv_nonneg surv_250 \
     <<EOF
 $(printf '%s' "$report" | python3 -c '
 import json, sys
@@ -50,12 +51,19 @@ d = json.load(sys.stdin)
 ev = d["events"][0]
 e = ev["lead_lag"]
 es = ev["event_study"]
+alive = [ev["survival_50ms_episodes"], ev["survival_100ms_episodes"],
+         ev["survival_250ms_episodes"]]
+surv = [ev["survival_open_mean_dollars"], ev["survival_50ms_mean_dollars"],
+        ev["survival_100ms_mean_dollars"], ev["survival_250ms_mean_dollars"]]
 print(e["lead_seconds"], e["correlation"],
       d["pipeline"]["records_per_sec"] / 1000.0,
       d["alloc"]["parse_per_msg"], d["alloc"]["book_per_msg"],
       d["malformed"], d["malformed_lines"], d["gaps"],
       int(es["lead_confirmed"]), es["follow_rate_z"],
-      int(ev["methods_agree"]), int(ev["consensus_leader"] == "kalshi"))
+      int(ev["methods_agree"]), int(ev["consensus_leader"] == "kalshi"),
+      int(alive[0] >= alive[1] >= alive[2]),
+      int(alive[0] <= ev["crossable_episodes"]),
+      int(min(surv) >= 0.0), surv[3])
 ')
 EOF
 
@@ -88,6 +96,13 @@ check "sequence gaps"        "$gaps"          "v == 0"
 check "parse allocs per msg" "$parse_per_msg" "v <= $MAX_PARSE_PER_MSG"
 check "book allocs per msg"  "$books_per_msg" "v <= $MAX_BOOKS_PER_MSG"
 check "throughput (k rec/s)" "$krps"          "v >= $MIN_KRPS"
+# Reaction-latency ladder invariants: alive counts can only shrink as the
+# delay grows, never exceed the episode count, and no surviving-edge mean
+# may go negative (an expired episode is zero, a taker declines losses).
+# These hold by construction; a violation means the fill logic broke.
+check "survival alive monotone" "$surv_alive_monotone" "v == 1"
+check "survival alive bounded"  "$surv_alive_bounded"  "v == 1"
+check "survival means >= 0"     "$surv_nonneg"         "v == 1"
 
 if [ "$failures" -gt 0 ]; then
   echo "perf gate: $failures check(s) failed"
