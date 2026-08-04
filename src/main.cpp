@@ -215,11 +215,14 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
     const auto& r = summary.top_by_edge[i];
     std::printf("%s{\"event_id\": \"%s\", \"edge_max_dollars\": %.4f, "
                 "\"edge_mean_dollars\": %.4f, \"crossable_updates\": %llu, "
-                "\"crossable_episodes\": %llu, \"crossable_longest_ms\": %.4f}",
+                "\"crossable_episodes\": %llu, \"crossable_longest_ms\": %.4f, "
+                "\"surviving_100ms_mean_dollars\": %.4f, "
+                "\"episodes_alive_100ms\": %llu}",
                 i == 0 ? "" : ", ", r.event_id.c_str(), r.edge_max_dollars,
                 r.edge_mean_dollars, u(r.crossable_updates),
                 u(r.crossable_episodes),
-                static_cast<double>(r.crossable_longest_ns) / 1e6);
+                static_cast<double>(r.crossable_longest_ns) / 1e6,
+                r.surviving_100ms_mean_dollars, u(r.episodes_alive_100ms));
   }
   std::printf("]},\n");
   std::printf("  \"events\": [");
@@ -550,12 +553,15 @@ void print_stats(const basis::bench::ReplayStats& stats) {
     for (std::size_t i = 0; i < s.top_by_edge.size(); ++i) {
       const auto& r = s.top_by_edge[i];
       std::printf("         %s %s  edge max $%.2f mean $%.2f  "
-                  "(%llu crossed updates, %llu episodes, longest %.1f ms)\n",
+                  "(%llu crossed updates, %llu episodes, longest %.1f ms, "
+                  "$%.2f survives 100ms in %llu)\n",
                   i == 0 ? "best edge" : "         ", r.event_id.c_str(),
                   r.edge_max_dollars, r.edge_mean_dollars,
                   static_cast<unsigned long long>(r.crossable_updates),
                   static_cast<unsigned long long>(r.crossable_episodes),
-                  static_cast<double>(r.crossable_longest_ns) / 1e6);
+                  static_cast<double>(r.crossable_longest_ns) / 1e6,
+                  r.surviving_100ms_mean_dollars,
+                  static_cast<unsigned long long>(r.episodes_alive_100ms));
     }
   }
 }
