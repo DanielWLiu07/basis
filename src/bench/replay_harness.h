@@ -189,6 +189,12 @@ struct ReplaySummary {
     std::int64_t crossable_longest_ns = 0;
     double edge_mean_dollars = 0.0;
     double edge_max_dollars = 0.0;
+    // The executability check on the same ranking: expected fee-aware
+    // sweep 100 ms after an episode opens, and how many episodes were
+    // still crossed then. Screen edge that never survives a realistic
+    // reaction delay reads very differently from edge that does.
+    double surviving_100ms_mean_dollars = 0.0;
+    std::uint64_t episodes_alive_100ms = 0;
   };
   // Crossable events, best edge first (max edge, then mean edge, then
   // event id so equal events rank deterministically). At most top_n.

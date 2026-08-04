@@ -328,7 +328,9 @@ ReplaySummary summarize(const ReplayStats& stats, std::size_t top_n) {
     s.top_by_edge.push_back({e.event_id, e.crossable_updates,
                              e.crossable_episodes, e.crossable_longest_ns,
                              e.crossable_edge_mean_dollars,
-                             e.crossable_edge_max_dollars});
+                             e.crossable_edge_max_dollars,
+                             e.episode_net_sweep_after_mean_dollars[2],
+                             e.episodes_alive_after[2]});
   }
   std::sort(s.top_by_edge.begin(), s.top_by_edge.end(),
             [](const auto& a, const auto& b) {
