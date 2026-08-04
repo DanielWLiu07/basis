@@ -197,9 +197,13 @@ every figure traces to one command. Recorded so far:
   headline: the gross sweep averages $1.13 per crossed update, but only
   109 of 537 crossed updates survive fees (net at the touch: mean -$0.36),
   while a taker free to decline losing fills keeps mean +$0.08, max
-  +$1.45. Crossable is not profitable; selective is. The fee and sweep
-  arithmetic saturates on corrupt sizes the same way the book does
-  (UBSan-verified), so a bad feed cannot poison the economics.
+  +$1.45 - and the survival ladder times the decay: 100 ms of reaction
+  delay leaves an expected $0.03 (59/210 episodes still crossed), 250 ms
+  leaves $0.01 (8/210). Crossable is not profitable; selective and fast
+  is. The fee and sweep arithmetic saturates on corrupt sizes the same
+  way the book does (UBSan-verified), so a bad feed cannot poison the
+  economics. Methodology and regeneration commands:
+  `docs/bench/economics.md`.
 - Venue integrity hashes are recomputed, not trusted: the parser rebuilds
   Polymarket's canonical book summary and checks its SHA-1 on every
   snapshot that carries the hashed fields, 13/13 verified with 0
