@@ -43,7 +43,7 @@ printf '%s\n\n' "$report"
 # on every CI runner; no jq dependency.
 read -r lead corr krps parse_per_msg books_per_msg malformed bad_lines gaps \
        confirmed follow_z agree consensus_kalshi \
-       surv_alive_monotone surv_alive_bounded surv_nonneg surv_250 \
+       surv_alive_monotone surv_alive_bounded surv_nonneg \
     <<EOF
 $(printf '%s' "$report" | python3 -c '
 import json, sys
@@ -63,7 +63,7 @@ print(e["lead_seconds"], e["correlation"],
       int(ev["methods_agree"]), int(ev["consensus_leader"] == "kalshi"),
       int(alive[0] >= alive[1] >= alive[2]),
       int(alive[0] <= ev["crossable_episodes"]),
-      int(min(surv) >= 0.0), surv[3])
+      int(min(surv) >= 0.0))
 ')
 EOF
 

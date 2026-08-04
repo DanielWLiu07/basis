@@ -117,19 +117,19 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       // was on the screen.
       const auto sweep_fill =
           model::crossed_sweep_net(rich, cheap, kalshi_rich);
-      ea.cross_net_sweep.observe(
-          static_cast<double>(sweep_fill.net_cents) / 100.0);
+      const double net_sweep_dollars =
+          static_cast<double>(sweep_fill.net_cents) / 100.0;
+      ea.cross_net_sweep.observe(net_sweep_dollars);
       if (sweep_fill.contracts > 0) ++ea.sweepable_updates;
       if (!ea.in_cross) {
         ea.in_cross = true;
-        ++ea.crossable_episodes;
-        ea.cross_start_ns = delta.ts_ns;
-        ea.episodes.push_back({delta.ts_ns, delta.ts_ns, 0, 0.0, 0.0});
+        ea.episodes.push_back(
+            {.start_ns = delta.ts_ns, .end_ns = delta.ts_ns});
+        ea.open_episode_last_sweep = 0.0;
       }
-      // Extend the run through this update; a run still open at end of
-      // replay is already fully accounted for.
-      ea.crossable_longest_ns =
-          std::max(ea.crossable_longest_ns, delta.ts_ns - ea.cross_start_ns);
+      // Extend the run through this update; the report derives episode
+      // count and longest span from the records, so the per-episode
+      // fields below are the single source of truth.
       auto& ep = ea.episodes.back();
       ep.end_ns = delta.ts_ns;
       ++ep.updates;
@@ -141,18 +141,17 @@ void ReplayHarness::on_event_update(const std::string& event_id,
       // opening update fills tau = 0 with its own value; a later update
       // crossing a tau boundary fills it with the value that was standing
       // through the gap. Episodes that uncross first leave alive false.
-      const double net_sweep_dollars =
-          static_cast<double>(sweep_fill.net_cents) / 100.0;
       for (int t = 0; t < ReplayStats::kReactionTaus; ++t) {
         if (ep.alive_after[t]) continue;
         if (delta.ts_ns - ep.start_ns >= ReplayStats::kReactionTauNs[t]) {
           ep.alive_after[t] = true;
           ep.net_sweep_after_dollars[t] =
-              ReplayStats::kReactionTauNs[t] == 0 ? net_sweep_dollars
-                                                  : ep.last_net_sweep_dollars;
+              ReplayStats::kReactionTauNs[t] == 0
+                  ? net_sweep_dollars
+                  : ea.open_episode_last_sweep;
         }
       }
-      ep.last_net_sweep_dollars = net_sweep_dollars;
+      ea.open_episode_last_sweep = net_sweep_dollars;
     } else {
       ea.in_cross = false;
     }
@@ -273,8 +272,12 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     }
     report.two_sided_updates = ea.two_sided_updates;
     report.crossable_updates = ea.crossable_updates;
-    report.crossable_episodes = ea.crossable_episodes;
-    report.crossable_longest_ns = ea.crossable_longest_ns;
+    report.crossable_episodes = ea.episodes.size();
+    report.crossable_longest_ns = 0;
+    for (const auto& ep : ea.episodes) {
+      report.crossable_longest_ns =
+          std::max(report.crossable_longest_ns, ep.end_ns - ep.start_ns);
+    }
     if (ea.cross_depth.samples() > 0) {
       report.crossable_depth_mean = ea.cross_depth.mean();
       report.crossable_depth_max = ea.cross_depth.max();
@@ -329,8 +332,10 @@ ReplaySummary summarize(const ReplayStats& stats, std::size_t top_n) {
                              e.crossable_episodes, e.crossable_longest_ns,
                              e.crossable_edge_mean_dollars,
                              e.crossable_edge_max_dollars,
-                             e.episode_net_sweep_after_mean_dollars[2],
-                             e.episodes_alive_after[2]});
+                             e.episode_net_sweep_after_mean_dollars[
+                                 ReplayStats::kTau100msIndex],
+                             e.episodes_alive_after[
+                                 ReplayStats::kTau100msIndex]});
   }
   std::sort(s.top_by_edge.begin(), s.top_by_edge.end(),
             [](const auto& a, const auto& b) {

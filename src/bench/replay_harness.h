@@ -66,6 +66,10 @@ struct ReplayStats {
   static constexpr int kReactionTaus = 4;
   static constexpr std::int64_t kReactionTauNs[kReactionTaus] = {
       0, 50'000'000, 100'000'000, 250'000'000};
+  // The rung the ranked summary quotes; the assert keeps a ladder reorder
+  // from silently relabeling that number.
+  static constexpr int kTau100msIndex = 2;
+  static_assert(kReactionTauNs[kTau100msIndex] == 100'000'000);
 
   struct CrossedEpisode {
     std::int64_t start_ns = 0;
@@ -80,8 +84,6 @@ struct ReplayStats {
     // uncrossed before tau ever arrived - the opportunity was gone.
     double net_sweep_after_dollars[kReactionTaus] = {0.0, 0.0, 0.0, 0.0};
     bool   alive_after[kReactionTaus] = {false, false, false, false};
-    // Running value for the fill logic above; not part of the report.
-    double last_net_sweep_dollars = 0.0;
   };
 
   struct EventReport {
@@ -269,10 +271,9 @@ class ReplayHarness {
     std::uint64_t crossable_updates = 0;
     // Crossed-run state: a run opens on the first crossed update after an
     // uncrossed (or initial) one and closes on the next uncrossed update.
+    // The open run is always episodes.back(); count and longest span are
+    // derived from the records at report time rather than kept alongside.
     bool in_cross = false;
-    std::int64_t cross_start_ns = 0;
-    std::uint64_t crossable_episodes = 0;
-    std::int64_t crossable_longest_ns = 0;
     // Running stats over the crossed depth (cents) and the executable
     // touch notional (dollars) of crossable updates; the same generic
     // accumulator the spreads use.
@@ -283,6 +284,11 @@ class ReplayHarness {
     std::uint64_t profitable_updates = 0;
     analytics::DivergenceTracker cross_net_sweep;
     std::uint64_t sweepable_updates = 0;
+    // Optimal net sweep as of the previous crossed update of the OPEN
+    // episode: the standing value the survival fill logic reads when an
+    // update crosses a tau boundary. Scratch for the harness, which is
+    // why it lives here and not in the reported CrossedEpisode.
+    double open_episode_last_sweep = 0.0;
     // Per-episode records; the open episode is always episodes.back().
     std::vector<ReplayStats::CrossedEpisode> episodes;
     // Last update receive time per venue, for quote-age at sample time.
