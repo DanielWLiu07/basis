@@ -68,4 +68,19 @@ print("  closed loop : lead {:.3f}s  95% ci {:.3f}..{:.3f}s  corr {:.2f}".format
     e["correlation"]))
 print("  hot path    : {:.1f} parse + {:.1f} book allocs/msg, {:.0f} B/msg".format(
     a["parse_per_msg"], a["book_per_msg"], a["parse_bytes_per_msg"]))
+ev = d["events"][0]
+print("  economics   : touch ${:.2f} mean / ${:.2f} max, net {:d}/{:d} "
+      "profitable, optimal ${:.2f}".format(
+    ev["crossable_edge_mean_dollars"], ev["crossable_edge_max_dollars"],
+    ev["crossable_profitable_updates"], ev["crossable_updates"],
+    ev["crossable_net_sweep_mean_dollars"]))
+print("  survival    : open ${:.2f}, 50ms ${:.2f} ({}/{} eps), "
+      "100ms ${:.2f} ({}/{}), 250ms ${:.2f} ({}/{})".format(
+    ev["survival_open_mean_dollars"],
+    ev["survival_50ms_mean_dollars"], ev["survival_50ms_episodes"],
+    ev["crossable_episodes"],
+    ev["survival_100ms_mean_dollars"], ev["survival_100ms_episodes"],
+    ev["crossable_episodes"],
+    ev["survival_250ms_mean_dollars"], ev["survival_250ms_episodes"],
+    ev["crossable_episodes"]))
 PY
