@@ -475,3 +475,92 @@ TEST(ReplayHarness, SweepEdgeWalksPastTheTouch) {
   EXPECT_LE(event.crossable_net_sweep_max_dollars,
             event.crossable_sweep_max_dollars);
 }
+
+// Two mutually exclusive outcomes in one basket, quoted on Polymarket.
+// The basket samples only when BOTH books are two-sided; the max
+// two-sided count explains a zero-sample basket instead of hiding it.
+TEST(ReplayHarness, BasketSumsSampleOnlyWhenFullyQuoted) {
+  auto reg = TomlContractRegistry::parse(R"(
+[[event]]
+id = "demo-yes"
+basket = "demo"
+polymarket_token = "1001"
+
+[[event]]
+id = "demo-no"
+basket = "demo"
+polymarket_token = "1002"
+)");
+  ASSERT_TRUE(reg.has_value());
+  ASSERT_EQ(reg->baskets().size(), 1u);
+  ASSERT_EQ(reg->baskets()[0].members.size(), 2u);
+
+  const auto path = testing::TempDir() + "basket.feedlog";
+  {
+    std::ofstream out(path);
+    // First member two-sided: 40/44 (mid 42c, bid 40c). Basket incomplete.
+    out << "1000\tpolymarket\t"
+        << R"({"event_type":"book","asset_id":"1001","market":"0xa",)"
+        << R"("bids":[{"price":"0.40","size":"10"}],)"
+        << R"("asks":[{"price":"0.44","size":"10"}]})"
+        << "\n";
+    // Second member two-sided: 50/54 (mid 52c, bid 50c). Basket complete:
+    // mid-sum $0.94, bid-sum $0.90.
+    out << "2000\tpolymarket\t"
+        << R"({"event_type":"book","asset_id":"1002","market":"0xb",)"
+        << R"("bids":[{"price":"0.50","size":"10"}],)"
+        << R"("asks":[{"price":"0.54","size":"10"}]})"
+        << "\n";
+    // First member's bid improves to 46: mid-sum $0.97, bid-sum $0.96.
+    out << "3000\tpolymarket\t"
+        << R"({"event_type":"price_change","market":"0xa","price_changes":)"
+        << R"([{"asset_id":"1001","price":"0.46","side":"BUY","size":"5"}],)"
+        << R"("timestamp":"1750000000500"})"
+        << "\n";
+    // Second member's book empties on the ask side: basket incomplete
+    // again, so no further samples, but the update still counts coverage.
+    out << "4000\tpolymarket\t"
+        << R"({"event_type":"book","asset_id":"1002","market":"0xb",)"
+        << R"("bids":[{"price":"0.50","size":"10"}],"asks":[]})"
+        << "\n";
+  }
+  ReplayHarness harness(*reg);
+  const auto stats = harness.run(path);
+  ASSERT_TRUE(stats.has_value());
+  ASSERT_EQ(stats->baskets.size(), 1u);
+  const auto& b = stats->baskets[0];
+  EXPECT_EQ(b.basket_id, "demo");
+  EXPECT_EQ(b.members, 2u);
+  // Kalshi never quoted: zero samples, zero coverage.
+  EXPECT_EQ(b.kalshi.samples, 0u);
+  EXPECT_EQ(b.kalshi.max_two_sided, 0u);
+  // Polymarket sampled at ts 2000 and 3000 only.
+  EXPECT_EQ(b.polymarket.samples, 2u);
+  EXPECT_EQ(b.polymarket.max_two_sided, 2u);
+  EXPECT_NEAR(b.polymarket.mid_sum_min_dollars, 0.94, 1e-9);
+  EXPECT_NEAR(b.polymarket.mid_sum_max_dollars, 0.97, 1e-9);
+  EXPECT_NEAR(b.polymarket.mid_sum_mean_dollars, (0.94 + 0.97) / 2.0, 1e-9);
+  EXPECT_NEAR(b.polymarket.bid_sum_max_dollars, 0.96, 1e-9);
+}
+
+TEST(ReplayHarness, RegistrySingletonBasketsArePruned) {
+  auto reg = TomlContractRegistry::parse(R"(
+[[event]]
+id = "solo"
+basket = "lonely"
+polymarket_token = "2001"
+
+[[event]]
+id = "pair-a"
+basket = "pair"
+polymarket_token = "2002"
+
+[[event]]
+id = "pair-b"
+basket = "pair"
+polymarket_token = "2003"
+)");
+  ASSERT_TRUE(reg.has_value());
+  ASSERT_EQ(reg->baskets().size(), 1u);
+  EXPECT_EQ(reg->baskets()[0].id, "pair");
+}

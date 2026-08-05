@@ -1,5 +1,7 @@
 #include "normalize/contract_registry.h"
 
+#include <algorithm>
+
 #include <cctype>
 #include <fstream>
 #include <sstream>
@@ -28,6 +30,7 @@ void set_error(std::string* error, int line, std::string_view message) {
 
 // One [[event]] table under construction.
 struct PendingEvent {
+  std::string basket;
   int line = 0;  // where the table started, for error reporting
   std::string id;
   std::string kalshi;
@@ -96,6 +99,15 @@ std::optional<TomlContractRegistry> TomlContractRegistry::parse(
       registry.polymarket_no_tokens_.insert(event.polymarket_no_token);
     }
     registry.event_ids_.push_back(event.id);
+    if (!event.basket.empty()) {
+      auto it = std::find_if(registry.baskets_.begin(), registry.baskets_.end(),
+                             [&](const Basket& b) { return b.id == event.basket; });
+      if (it == registry.baskets_.end()) {
+        registry.baskets_.push_back({event.basket, {}});
+        it = std::prev(registry.baskets_.end());
+      }
+      it->members.push_back(event.id);
+    }
     event = PendingEvent{};
     return true;
   };
@@ -146,11 +158,14 @@ std::optional<TomlContractRegistry> TomlContractRegistry::parse(
       event.polymarket_token = std::string(value);
     } else if (key == "polymarket_no_token") {
       event.polymarket_no_token = std::string(value);
+    } else if (key == "basket") {
+      event.basket = std::string(value);
     }
     // Other keys (description, polymarket_market, ...) are documentation.
   }
 
   if (!flush_event()) return std::nullopt;
+  registry.prune_singleton_baskets();
   return registry;
 }
 
@@ -165,6 +180,12 @@ std::optional<std::string_view> TomlContractRegistry::event_id(
 
 bool TomlContractRegistry::is_polymarket_no(std::string_view market) const {
   return polymarket_no_tokens_.find(market) != polymarket_no_tokens_.end();
+}
+
+// Single-member groups carry no cross-outcome information; parse() keeps
+// them while members accumulate, so prune here where the file is complete.
+void TomlContractRegistry::prune_singleton_baskets() {
+  std::erase_if(baskets_, [](const Basket& b) { return b.members.size() < 2; });
 }
 
 }  // namespace basis::normalize

@@ -170,6 +170,32 @@ struct ReplayStats {
     analytics::EventStudyResult event_study;  // independent cross-check
   };
   std::vector<EventReport> events;  // sorted by event id
+
+  // Mutually exclusive outcome groups (basket = "..." in the registry),
+  // watched per venue. The YES prices of mutually exclusive outcomes obey
+  // a hard no-arbitrage bound: if the best BIDS ever sum above $1.00,
+  // selling one contract of each outcome locks in a riskless profit (at
+  // most one can pay out) - and that holds even when the basket lists
+  // only some outcomes. The mid-price sum is the softer coherence read:
+  // how much probability mass the venue assigns the listed outcomes.
+  // Sampled only on updates where every member is two-sided on the venue.
+  struct BasketVenueReport {
+    std::uint64_t samples = 0;
+    // Most members simultaneously two-sided on this venue: when samples
+    // is zero this says how close the basket ever came to fully quoting.
+    std::uint64_t max_two_sided = 0;
+    double mid_sum_mean_dollars = 0.0;
+    double mid_sum_min_dollars = 0.0;
+    double mid_sum_max_dollars = 0.0;
+    double bid_sum_max_dollars = 0.0;
+  };
+  struct BasketReport {
+    std::string basket_id;
+    std::uint64_t members = 0;
+    BasketVenueReport kalshi;
+    BasketVenueReport polymarket;
+  };
+  std::vector<BasketReport> baskets;  // registry file order
 };
 
 // Session-level rollup of one replay. Per-event blocks answer "what did
@@ -247,6 +273,8 @@ class ReplayHarness {
                                  std::string* error = nullptr);
 
  private:
+  void observe_basket(const std::string& event_id,
+                      const model::BookDelta& delta);
   void on_event_update(const std::string& event_id,
                        const model::UnifiedBook& book,
                        const model::BookDelta& delta);
@@ -303,6 +331,18 @@ class ReplayHarness {
         : lead_lag(config) {}
   };
   std::unordered_map<std::string, EventAnalytics> analytics_;
+  // Basket bookkeeping: member lists from the registry, an index from
+  // event id to basket, and per-venue running stats.
+  struct BasketState {
+    std::string id;
+    std::vector<std::string> members;
+    analytics::DivergenceTracker mid_sum[2];   // [0] kalshi, [1] polymarket
+    double bid_sum_max[2] = {0.0, 0.0};
+    std::uint64_t samples[2] = {0, 0};
+    std::uint64_t max_two_sided[2] = {0, 0};
+  };
+  std::vector<BasketState> baskets_;
+  std::unordered_map<std::string, std::size_t> event_to_basket_;
   LatencyRecorder latency_;
   ReplayStats stats_;
 };

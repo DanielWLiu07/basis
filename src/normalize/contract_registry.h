@@ -32,12 +32,26 @@ class ContractRegistry {
     (void)market;
     return false;
   }
+
+  // Named groups of mutually exclusive outcomes (basket = "..." in the
+  // registry file), each with its member event ids in file order. Only
+  // groups with at least two members are reported; the default registry
+  // has none.
+  struct Basket {
+    std::string id;
+    std::vector<std::string> members;
+  };
+  virtual const std::vector<Basket>& baskets() const {
+    static const std::vector<Basket> kNone;
+    return kNone;
+  }
 };
 
 // Registry backed by the contracts.toml subset:
 //
 //   [[event]]
 //   id = "fed-cut-2026-09"
+//   basket = "fed-2026-09"                (optional mutually-exclusive group)
 //   kalshi = "FED-26SEP-CUT"              (Kalshi market_ticker)
 //   polymarket_token = "7132107..."       (YES-outcome asset id)
 //   polymarket_no_token = "9004411..."    (NO-outcome asset id, folded)
@@ -68,8 +82,11 @@ class TomlContractRegistry final : public ContractRegistry {
     return polymarket_tokens_;
   }
 
+  const std::vector<Basket>& baskets() const override { return baskets_; }
+
  private:
   TomlContractRegistry() = default;
+  void prune_singleton_baskets();
 
   core::StringMap<std::string> kalshi_to_event_;
   core::StringMap<std::string> polymarket_to_event_;
@@ -77,6 +94,7 @@ class TomlContractRegistry final : public ContractRegistry {
   std::vector<std::string> event_ids_;
   std::vector<std::string> kalshi_tickers_;
   std::vector<std::string> polymarket_tokens_;
+  std::vector<Basket> baskets_;
 };
 
 }  // namespace basis::normalize

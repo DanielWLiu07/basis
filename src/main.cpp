@@ -255,6 +255,31 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 parse_per_msg, parse_bytes_per_msg, book_per_msg);
   }
   const auto summary = basis::bench::summarize(stats);
+  std::printf("  \"baskets\": [");
+  for (std::size_t i = 0; i < stats.baskets.size(); ++i) {
+    const auto& b = stats.baskets[i];
+    const auto venue_json = [&](const char* name,
+                                const basis::bench::ReplayStats::
+                                    BasketVenueReport& r) {
+      std::printf("\"%s\": {\"samples\": %llu, "
+                  "\"max_two_sided\": %llu, "
+                  "\"mid_sum_mean_dollars\": %.4f, "
+                  "\"mid_sum_min_dollars\": %.4f, "
+                  "\"mid_sum_max_dollars\": %.4f, "
+                  "\"bid_sum_max_dollars\": %.4f}",
+                  name, u(r.samples), u(r.max_two_sided),
+                  r.mid_sum_mean_dollars,
+                  r.mid_sum_min_dollars, r.mid_sum_max_dollars,
+                  r.bid_sum_max_dollars);
+    };
+    std::printf("%s{\"basket_id\": \"%s\", \"members\": %llu, ",
+                i == 0 ? "" : ", ", b.basket_id.c_str(), u(b.members));
+    venue_json("kalshi", b.kalshi);
+    std::printf(", ");
+    venue_json("polymarket", b.polymarket);
+    std::printf("}");
+  }
+  std::printf("],\n");
   std::printf("  \"summary\": {\"events_tracked\": %llu, "
               "\"events_with_overlap\": %llu, \"events_crossable\": %llu, "
               "\"basis_samples\": %llu, \"crossable_updates\": %llu, "
@@ -398,6 +423,35 @@ void print_stats(const basis::bench::ReplayStats& stats) {
               static_cast<double>(lat.p90_ns) / 1e3,
               static_cast<double>(lat.p99_ns) / 1e3,
               static_cast<double>(lat.max_ns) / 1e3);
+
+  // Mutually exclusive baskets: the mid-price sum is the venue's total
+  // probability mass on the listed outcomes; the best-bid sum is checked
+  // against the hard $1 no-arbitrage bound (bid-sum above $1 means selling
+  // every outcome locks in riskless profit, exhaustive basket or not).
+  for (const auto& b : stats.baskets) {
+    const auto print_venue = [&](const char* venue,
+                                 const basis::bench::ReplayStats::
+                                     BasketVenueReport& r) {
+      if (r.samples == 0) {
+        if (r.max_two_sided > 0) {
+          std::printf("basket    %s (%llu outcomes, %s): never fully "
+                      "quoted; at most %llu outcomes two-sided at once\n",
+                      b.basket_id.c_str(), u(b.members), venue,
+                      u(r.max_two_sided));
+        }
+        return;
+      }
+      std::printf("basket    %s (%llu outcomes, %s): mid-sum mean $%.3f "
+                  "[$%.3f..$%.3f], bid-sum max $%.3f "
+                  "($%.3f below the $1 arb bound) over %llu samples\n",
+                  b.basket_id.c_str(), u(b.members), venue,
+                  r.mid_sum_mean_dollars, r.mid_sum_min_dollars,
+                  r.mid_sum_max_dollars, r.bid_sum_max_dollars,
+                  1.0 - r.bid_sum_max_dollars, u(r.samples));
+    };
+    print_venue("kalshi", b.kalshi);
+    print_venue("polymarket", b.polymarket);
+  }
 
   for (const auto& event : stats.events) {
     std::printf("\nevent %s\n", event.event_id.c_str());

@@ -51,6 +51,31 @@ The one-line story: the screen shows $3.00; a fee-paying taker with a
 windows still exist. The edge is real and it rots in about a quarter of
 a second.
 
-Real-capture versions of these numbers wait on the simultaneous
+## Real-data basket coherence (the live capture)
+
+Mutually exclusive outcomes obey a hard no-arbitrage bound whether or not
+the basket lists every outcome: if the best BIDS ever sum above $1.00,
+selling one contract of each locks in riskless profit (at most one pays).
+The mid-price sum is the softer read: the venue's probability mass on the
+listed outcomes. `basket = "..."` in configs/contracts.toml declares the
+groups; sums are sampled only when every member is two-sided.
+
+On the committed 30-minute live capture (replay with
+configs/contracts.toml):
+
+    basket fed-2026-07 (2 outcomes, polymarket):
+      mid-sum mean $0.914 [$0.905..$1.400]
+      bid-sum max $0.900 ($0.100 below the $1 arb bound), 2,568 samples
+    basket wc26-winner (12 outcomes, polymarket):
+      never fully quoted; at most 11 of 12 outcomes two-sided at once
+
+The split between those two lines is the finding: mid-price coherence
+BROKE during the session (a momentary $1.40 sum, from a thin book's mid
+spiking), while the tradable bound never came within ten cents of
+breaking. Quote noise and executable opportunity are different things,
+which is the same lesson the fee ladder teaches on the synthetic side -
+and here it is on live data.
+
+Real-capture versions of the cross-venue numbers wait on the simultaneous
 both-venue recording (Kalshi credentials); the pipeline and gates run
 unchanged on a live feedlog.
