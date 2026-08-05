@@ -23,6 +23,45 @@ ReplayHarness::ReplayHarness(const normalize::ContractRegistry& registry,
                                   const model::BookDelta& delta) {
     on_event_update(event_id, book, delta);
   });
+  for (const auto& b : registry_.baskets()) {
+    BasketState state;
+    state.id = b.id;
+    state.members = b.members;
+    for (const auto& m : b.members) {
+      event_to_basket_.emplace(m, baskets_.size());
+    }
+    baskets_.push_back(std::move(state));
+  }
+}
+
+// A delta for any basket member re-prices the whole group on that venue.
+// Sample only when every member is two-sided there: a partial basket sum
+// would understate the group and make both bounds meaningless.
+void ReplayHarness::observe_basket(const std::string& event_id,
+                                   const model::BookDelta& delta) {
+  const auto bit = event_to_basket_.find(event_id);
+  if (bit == event_to_basket_.end()) return;
+  BasketState& basket = baskets_[bit->second];
+  const int v = delta.venue == model::Venue::Kalshi ? 0 : 1;
+  double mid_sum = 0.0;
+  double bid_sum = 0.0;
+  std::uint64_t two_sided = 0;
+  for (const auto& member : basket.members) {
+    const model::UnifiedBook* ub = normalizer_.book(member);
+    if (!ub) continue;
+    const auto& side = ub->book(delta.venue);
+    const auto bid = side.best_bid();
+    const auto mid = side.mid();
+    if (!bid || !mid || !side.best_ask()) continue;
+    ++two_sided;
+    mid_sum += *mid / 100.0;
+    bid_sum += static_cast<double>(*bid) / 100.0;
+  }
+  basket.max_two_sided[v] = std::max(basket.max_two_sided[v], two_sided);
+  if (two_sided != basket.members.size()) return;
+  basket.mid_sum[v].observe(mid_sum);
+  basket.bid_sum_max[v] = std::max(basket.bid_sum_max[v], bid_sum);
+  ++basket.samples[v];
 }
 
 void ReplayHarness::on_event_update(const std::string& event_id,
@@ -62,6 +101,8 @@ void ReplayHarness::on_event_update(const std::string& event_id,
     if (!bid || !ask) return std::nullopt;
     return static_cast<double>(*ask - *bid);
   };
+  observe_basket(event_id, delta);
+
   const auto& kb = book.book(model::Venue::Kalshi);
   const auto& pb = book.book(model::Venue::Polymarket);
   if (const auto s = spread_of(kb)) it->second.kalshi_spread.observe(*s);
@@ -249,6 +290,27 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
   stats_.latency = latency_.report();
 
   stats_.events.clear();
+  stats_.baskets.reserve(baskets_.size());
+  for (const auto& b : baskets_) {
+    ReplayStats::BasketReport report;
+    report.basket_id = b.id;
+    report.members = b.members.size();
+    const auto venue_report = [&](int v) {
+      ReplayStats::BasketVenueReport r;
+      r.samples = b.samples[v];
+      r.max_two_sided = b.max_two_sided[v];
+      if (b.samples[v] > 0) {
+        r.mid_sum_mean_dollars = b.mid_sum[v].mean();
+        r.mid_sum_min_dollars = b.mid_sum[v].min();
+        r.mid_sum_max_dollars = b.mid_sum[v].max();
+        r.bid_sum_max_dollars = b.bid_sum_max[v];
+      }
+      return r;
+    };
+    report.kalshi = venue_report(0);
+    report.polymarket = venue_report(1);
+    stats_.baskets.push_back(std::move(report));
+  }
   stats_.events.reserve(analytics_.size());
   for (const auto& [event_id, ea] : analytics_) {
     ReplayStats::EventReport report;

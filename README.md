@@ -204,6 +204,14 @@ every figure traces to one command. Recorded so far:
   way the book does (UBSan-verified), so a bad feed cannot poison the
   economics. Methodology and regeneration commands:
   `docs/bench/economics.md`.
+- Mutually exclusive outcome groups are watched as baskets on live data:
+  best-bid sums are checked against the hard $1 no-arbitrage bound (valid
+  even for partial baskets), mid-price sums read the venue's probability
+  mass. On the committed 30-minute capture the Fed basket's mid-sum broke
+  coherence for a moment ($1.40) while the tradable bid-sum never came
+  within ten cents of the bound - quote noise and executable opportunity
+  are different things, measured on live data
+  (`docs/bench/economics.md`).
 - Venue integrity hashes are recomputed, not trusted: the parser rebuilds
   Polymarket's canonical book summary and checks its SHA-1 on every
   snapshot that carries the hashed fields, 13/13 verified with 0

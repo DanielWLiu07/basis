@@ -15,12 +15,19 @@
 # (NO tokens 2026-07-04; Kalshi: series KXMENWORLDCUP / KXFEDDECISION;
 # Polymarket: gamma-api and clob.polymarket.com, sorted by 24h volume).
 # Matching was done on the exact outcome wording.
+#
+# basket groups mutually exclusive outcomes of one real-world question.
+# Neither basket is exhaustive (only the liquid outcomes are listed), so
+# the mid-price sum reads as the venue's probability mass on the listed
+# outcomes, and only the best-bid sum has a hard bound: above $1.00 it
+# is a riskless arbitrage no matter what is missing from the list.
 
 # --- Fed decision, July 2026 meeting (macro; both venues quote the same
 # outcomes: Kalshi H0 "maintains rate" = Polymarket "no change") ---
 
 [[event]]
 id = "fed-2026-07-cut-25"
+basket = "fed-2026-07"
 description = "Fed cuts rates by 25 bps at the July 2026 meeting"
 kalshi = "KXFEDDECISION-26JUL-C25"
 polymarket_token = "107111506004559425167535337910569809007100298896139468418632748246491535011700"
@@ -28,6 +35,7 @@ polymarket_no_token = "907131752852388372291413624563806606994577011421426557312
 
 [[event]]
 id = "fed-2026-07-no-change"
+basket = "fed-2026-07"
 description = "Fed leaves rates unchanged at the July 2026 meeting"
 kalshi = "KXFEDDECISION-26JUL-H0"
 polymarket_token = "111604417349377875799825956621596386269673370070912696668140891647145772186047"
@@ -38,6 +46,7 @@ polymarket_no_token = "360150509211273062452660446997972687802681724468560632918
 
 [[event]]
 id = "wc26-winner-mexico"
+basket = "wc26-winner"
 description = "Mexico wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-MX"
 polymarket_token = "22587775301869146748237913050505932485648958481571808324285560650057390882036"
@@ -46,6 +55,7 @@ polymarket_market = "0x5ccfe1b69a582d2985db08a8481a0d74c314b1fce9b4711ae2efb2c64
 
 [[event]]
 id = "wc26-winner-usa"
+basket = "wc26-winner"
 description = "USA wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-US"
 polymarket_token = "94603648636330087039501304492699481091005420017442244191603206509188088089447"
@@ -54,6 +64,7 @@ polymarket_market = "0xcdb1f0400949238a63d3e88243d2ada08cd9c2a71985ced9f0cfd5e66
 
 [[event]]
 id = "wc26-winner-england"
+basket = "wc26-winner"
 description = "England wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-GB"
 polymarket_token = "115556263888245616435851357148058235707004733438163639091106356867234218207169"
@@ -62,6 +73,7 @@ polymarket_market = "0x375409bc5eeeff961e82b479caeccc20f33d15738e5bce1186d628aa3
 
 [[event]]
 id = "wc26-winner-brazil"
+basket = "wc26-winner"
 description = "Brazil wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-BR"
 polymarket_token = "27576533317283401577758999384642760405921738493660383550832555714312627457443"
@@ -70,6 +82,7 @@ polymarket_market = "0x30d55d8124ee1e12dabe89201badc45669b81dff69e4ce44d961f3287
 
 [[event]]
 id = "wc26-winner-france"
+basket = "wc26-winner"
 description = "France wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-FR"
 polymarket_token = "108233603819467706476318984012158651931658302669301887462181073562758483842092"
@@ -78,6 +91,7 @@ polymarket_market = "0x9b6fef249040fd17e9c107955b37ac2c3e923509b6b0ff01cc463a331
 
 [[event]]
 id = "wc26-winner-argentina"
+basket = "wc26-winner"
 description = "Argentina wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-AR"
 polymarket_token = "18812649149814341758733697580460697418474693998558159483117100240528657629879"
@@ -86,6 +100,7 @@ polymarket_market = "0x0c4cd2055d6ea89354ffddc55d6dbcef9355748112ea952fc925f3db6
 
 [[event]]
 id = "wc26-winner-spain"
+basket = "wc26-winner"
 description = "Spain wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-ES"
 polymarket_token = "4394372887385518214471608448209527405727552777602031099972143344338178308080"
@@ -94,6 +109,7 @@ polymarket_market = "0x7976b8dbacf9077eb1453a62bcefd6ab2df199acd28aad276ff0d920d
 
 [[event]]
 id = "wc26-winner-portugal"
+basket = "wc26-winner"
 description = "Portugal wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-PT"
 polymarket_token = "45415751658241142530386585138386640503488308219341470020075667342738719018629"
@@ -102,6 +118,7 @@ polymarket_market = "0x4f3421fb2daf5cca7430ed8d8132463963081572d75434393a1808fdb
 
 [[event]]
 id = "wc26-winner-belgium"
+basket = "wc26-winner"
 description = "Belgium wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-BE"
 polymarket_token = "30815807067456631524510535002617106205417832891402132396713720656146245200000"
@@ -110,6 +127,7 @@ polymarket_market = "0x32cfa52198e85e070d1b17d1b53c5c3a6aaae7736cdc33fa6aa04d353
 
 [[event]]
 id = "wc26-winner-morocco"
+basket = "wc26-winner"
 description = "Morocco wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-MA"
 polymarket_token = "69910730841487615802736046038473620030754616421912831175284551372639933569112"
@@ -118,6 +136,7 @@ polymarket_market = "0x37a6de1b21803e5f3fb1965116218215d79963af4f7e5165969636626
 
 [[event]]
 id = "wc26-winner-ghana"
+basket = "wc26-winner"
 description = "Ghana wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-GH"
 polymarket_token = "43907673646206657865778036957293730446366626078011238443367990170655175896145"
@@ -126,6 +145,7 @@ polymarket_market = "0x881a3ffa618b6ae0ab95a5637e310afb1afc2d99c921bfe3235b15ecc
 
 [[event]]
 id = "wc26-winner-norway"
+basket = "wc26-winner"
 description = "Norway wins the 2026 FIFA World Cup"
 kalshi = "KXMENWORLDCUP-26-NO"
 polymarket_token = "60447443643099453130956385288904175887233107411078568881602330835010340506057"
