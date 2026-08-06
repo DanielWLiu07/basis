@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "analytics/consensus.h"
+#include "bench/lob_bench.h"
 #include "bench/replay_harness.h"
 #include "bench/synth_generator.h"
 #include "core/counting_resource.h"
@@ -69,6 +70,11 @@ int usage() {
       "                   (recv_ns,event_id,field,value) for plotting\n"
       "      --episodes-csv <file> one row per crossed episode, incl. the\n"
       "                            surviving sweep at open/50/100/250 ms\n"
+      "\n"
+      "  basis lob-bench [--ops N] [--seed S]\n"
+      "      matching-engine microbenchmark: replays one deterministic order\n"
+      "      flow through the price-time-priority book and through a\n"
+      "      std::map baseline, and reports ns/op for both\n"
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
@@ -160,9 +166,6 @@ int run_synth(const std::vector<std::string_view>& args) {
   return 0;
 }
 
-// Machine-readable replay results, for the CI perf gate and any other
-// consumer that should not scrape human text. Event ids come from the
-// registry and are kebab-case, so they need no JSON escaping. Allocation
 // Writes one row per crossed run, in time order: the distribution behind
 // the report's count/longest aggregates, ready for a histogram of how
 // long dislocations persist and what they were worth. Sits beside the
@@ -211,6 +214,9 @@ bool write_episodes_csv(const std::string& path,
   return true;
 }
 
+// Machine-readable replay results, for the CI perf gate and any other
+// consumer that should not scrape human text. Event ids come from the
+// registry and are kebab-case, so they need no JSON escaping. Allocation
 // fields are emitted only in --alloc count mode (negative when absent).
 void print_stats_json(const basis::bench::ReplayStats& stats,
                       double parse_per_msg, double parse_bytes_per_msg,
@@ -692,6 +698,35 @@ class BdeParseArena final : public basis::bench::ParseArena {
   basis::alloc::BdeSequentialArena arena_;
 };
 #endif
+
+// Matching-engine microbenchmark: replays one deterministic order flow
+// through the production book and through a std::map baseline, and reports
+// both. The agreement flag guards the comparison - if the two books
+// produced different fills, the timings describe different workloads and
+// the numbers are meaningless.
+int run_lob_bench_cmd(const std::vector<std::string_view>& args) {
+  const auto ops = flag_value(args, "--ops", 2'000'000);
+  const auto seed = flag_value(args, "--seed", 7);
+  if (!ops || *ops <= 0 || *ops > 200'000'000 ||
+      !seed || *seed < 0 || *seed > 4'294'967'295) {
+    basis::log::error("lob-bench: bad flag value");
+    return usage();
+  }
+  const auto r = basis::bench::run_lob_bench(
+      static_cast<std::uint64_t>(*ops), static_cast<std::uint32_t>(*seed));
+  if (!r.agreed) {
+    basis::log::error("lob-bench: ladder and map books disagreed on fills");
+    return 1;
+  }
+  std::printf("LOB_BENCH ops=%llu fills=%llu filled_contracts=%lld "
+              "ladder_ns_per_op=%.1f map_ns_per_op=%.1f speedup=%.2fx "
+              "ladder_ops_per_sec=%.0f agreed=1\n",
+              u(r.ops), u(r.fills),
+              static_cast<long long>(r.filled_size),
+              r.ladder_ns_per_op, r.map_ns_per_op, r.speedup,
+              r.ladder_ns_per_op > 0.0 ? 1e9 / r.ladder_ns_per_op : 0.0);
+  return 0;
+}
 
 int run_replay(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
@@ -1195,6 +1230,7 @@ int main(int argc, char** argv) {
 
   const auto command = args[0];
   const std::vector<std::string_view> rest(args.begin() + 1, args.end());
+  if (command == "lob-bench") return run_lob_bench_cmd(rest);
   if (command == "synth") return run_synth(rest);
   if (command == "replay") return run_replay(rest);
 #ifdef BASIS_HAS_NET

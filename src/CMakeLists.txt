@@ -4,6 +4,7 @@
 #   basis_feed      <- basis_model (+ simdjson)
 #   basis_normalize <- basis_model
 #   basis_analytics <- basis_model
+#   basis_exec      <- basis_model
 #   basis_api       <- basis_model
 #   basis_bench     <- feed + normalize + analytics + api (composition root)
 #   basis_net       <- basis_core (+ Boost.Beast, OpenSSL; BASIS_ENABLE_NET)
@@ -22,6 +23,11 @@ add_library(basis_model
   model/unified_book.cpp
 )
 target_link_libraries(basis_model PUBLIC basis_core)
+
+add_library(basis_exec
+  exec/limit_order_book.cpp
+)
+target_link_libraries(basis_exec PUBLIC basis_model)
 
 add_library(basis_feed
   feed/kalshi_parser.cpp
@@ -48,12 +54,13 @@ add_library(basis_api
 target_link_libraries(basis_api PUBLIC basis_model)
 
 add_library(basis_bench
+  bench/lob_bench.cpp
   bench/latency_recorder.cpp
   bench/replay_harness.cpp
   bench/synth_generator.cpp
 )
 target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
-  basis_analytics basis_api)
+  basis_analytics basis_api basis_exec)
 
 add_executable(basis main.cpp)
 target_link_libraries(basis PRIVATE basis_bench)
@@ -95,7 +102,12 @@ if(BASIS_ENABLE_NET)
   target_link_libraries(basis_net PUBLIC basis_core
     Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
-  add_library(basis_feed_live
+  add_library(basis_exec
+  exec/limit_order_book.cpp
+)
+target_link_libraries(basis_exec PUBLIC basis_model)
+
+add_library(basis_feed_live
     feed/kalshi_feed.cpp
     feed/polymarket_feed.cpp
   )

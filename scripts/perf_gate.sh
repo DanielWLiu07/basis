@@ -104,6 +104,18 @@ check "survival alive monotone" "$surv_alive_monotone" "v == 1"
 check "survival alive bounded"  "$surv_alive_bounded"  "v == 1"
 check "survival means >= 0"     "$surv_nonneg"         "v == 1"
 
+# Matching engine: the production book and the std::map reference book must
+# agree on every fill over a long random order flow (agreed=0 exits nonzero
+# inside the binary), and throughput must stay in the right order of
+# magnitude. The floor is ~10x below developer hardware, same slack policy
+# as the replay throughput gate.
+lob=$("$BIN" lob-bench --ops 300000 --seed 5)
+printf '%s\n' "$lob"
+lob_ops_per_sec=$(printf '%s' "$lob" | grep -oE 'ladder_ops_per_sec=[0-9.]+' | cut -d= -f2)
+lob_agreed=$(printf '%s' "$lob" | grep -oE 'agreed=[01]' | cut -d= -f2)
+check "lob books agree"      "$lob_agreed"       "v == 1"
+check "lob ops/sec"          "$lob_ops_per_sec"  "v >= 2000000"
+
 if [ "$failures" -gt 0 ]; then
   echo "perf gate: $failures check(s) failed"
   exit 1
