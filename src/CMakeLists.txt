@@ -102,12 +102,7 @@ if(BASIS_ENABLE_NET)
   target_link_libraries(basis_net PUBLIC basis_core
     Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
-  add_library(basis_exec
-  exec/limit_order_book.cpp
-)
-target_link_libraries(basis_exec PUBLIC basis_model)
-
-add_library(basis_feed_live
+  add_library(basis_feed_live
     feed/kalshi_feed.cpp
     feed/polymarket_feed.cpp
   )
