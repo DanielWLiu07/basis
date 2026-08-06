@@ -204,6 +204,17 @@ every figure traces to one command. Recorded so far:
   way the book does (UBSan-verified), so a bad feed cannot poison the
   economics. Methodology and regeneration commands:
   `docs/bench/economics.md`.
+- The engine also has the venue side: `src/exec/limit_order_book.h` is a
+  price-time-priority matching engine (Gtc/Ioc/Fok, O(1) submit, cancel
+  and best-price via a flat 99-slot ladder and two-word occupancy bit
+  scan, because prediction-market prices are integer cents 1..99). It
+  sustains 28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook
+  `std::map` book replaying the identical order flow. Two correctness
+  checks run in CI: the two books must produce identical fill streams over
+  200k random operations, and executing a sweep as order flow through the
+  engine must reproduce `crossed_sweep_cents` exactly, so the executable
+  edge numbers are cross-checked rather than trusted
+  (`docs/bench/matching_engine.md`).
 - Mutually exclusive outcome groups are watched as baskets on live data:
   best-bid sums are checked against the hard $1 no-arbitrage bound (valid
   even for partial baskets), mid-price sums read the venue's probability
