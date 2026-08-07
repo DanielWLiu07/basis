@@ -203,6 +203,16 @@ every figure traces to one command. Recorded so far:
   the registry parser under ASan and UBSan, 100k executions per target
   per commit, 2M per target in local deep runs, zero findings in project
   code to date.
+- `docs/bench/fanout.md`: the consumer side of distribution. A synchronous
+  session runs handlers on the publisher's thread, so the slowest consumer
+  sets the publisher's rate: with one 50-microsecond handler the publisher
+  is pinned near 20,000 updates/sec at every fan-out size, which is exactly
+  1 / 50 microseconds. `api::ConflatingSession` gives each subscriber one
+  slot per topic instead of a queue, so publishers never wait on consumers
+  and memory is bounded by subscribers times topics rather than by publish
+  rate. At 16 subscribers the publisher runs 46x faster (899k updates/sec),
+  and every subscriber including the slow one ends holding the current
+  value: conflation drops the stale middle, never the present.
 - `docs/bench/matching_engine.md`: the price-time-priority book sustains
   28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook std::map
   book replaying identical order flow, with per-class tail latency
