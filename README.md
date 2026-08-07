@@ -204,6 +204,15 @@ every figure traces to one command. Recorded so far:
   way the book does (UBSan-verified), so a bad feed cannot poison the
   economics. Methodology and regeneration commands:
   `docs/bench/economics.md`.
+- The mid is not fair value on a wide book, and the engine says so with
+  numbers: it tracks queue imbalance and the size-weighted microprice at
+  every touch. On the committed 30-minute capture, 11 of 13 two-sided
+  events were bid-heavy and the microprice sat 7.99 cents above the mid
+  on average, scaling with the spread (+9.9c on books quoted wider than
+  20 cents, +1.7c on tighter ones). That qualifies every mid-based
+  divergence statistic and says which events they can be trusted on; the
+  crossable-dislocation ladder is unaffected because it never used mids,
+  only executable bid and ask prices (`docs/bench/economics.md`).
 - The engine also has the venue side: `src/exec/limit_order_book.h` is a
   price-time-priority matching engine (Gtc/Ioc/Fok, O(1) submit, cancel
   and best-price via a flat 99-slot ladder and two-word occupancy bit

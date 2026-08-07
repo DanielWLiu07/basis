@@ -1,5 +1,6 @@
 #include "bench/replay_harness.h"
 
+#include "analytics/microstructure.h"
 #include "model/fees.h"
 
 #include <algorithm>
@@ -107,6 +108,21 @@ void ReplayHarness::on_event_update(const std::string& event_id,
   const auto& pb = book.book(model::Venue::Polymarket);
   if (const auto s = spread_of(kb)) it->second.kalshi_spread.observe(*s);
   if (const auto s = spread_of(pb)) it->second.poly_spread.observe(*s);
+
+  // Size-weighted view of the same touch: how lopsided each queue is, and
+  // how far the microprice sits from the mid the basis is built on.
+  auto& ms = it->second;
+  const auto k_micro = analytics::microprice_cents(kb);
+  const auto p_micro = analytics::microprice_cents(pb);
+  if (const auto imb = analytics::queue_imbalance(kb)) {
+    ms.kalshi_imbalance.observe(*imb);
+  }
+  if (const auto imb = analytics::queue_imbalance(pb)) {
+    ms.poly_imbalance.observe(*imb);
+  }
+  if (k_micro && kalshi_mid) ms.kalshi_micro_gap.observe(*k_micro - *kalshi_mid);
+  if (p_micro && poly_mid) ms.poly_micro_gap.observe(*p_micro - *poly_mid);
+  if (k_micro && p_micro) ms.micro_basis.observe(*k_micro - *p_micro);
 
   // A crossable cross-venue dislocation: one venue's best bid sits above the
   // other's best ask, so the two markets are crossed and (fees aside) the gap
@@ -328,6 +344,21 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     }
     if (ea.kalshi_spread.samples() > 0) {
       report.kalshi_spread_mean = ea.kalshi_spread.mean();
+    }
+    // Microstructure is per-venue and independent of whether the two
+    // venues ever crossed, so it is copied at event scope rather than
+    // inside the crossable branch below.
+    if (ea.kalshi_imbalance.samples() > 0) {
+      report.kalshi_imbalance_mean = ea.kalshi_imbalance.mean();
+      report.kalshi_micro_minus_mid_mean = ea.kalshi_micro_gap.mean();
+    }
+    if (ea.poly_imbalance.samples() > 0) {
+      report.poly_imbalance_mean = ea.poly_imbalance.mean();
+      report.poly_micro_minus_mid_mean = ea.poly_micro_gap.mean();
+    }
+    report.micro_basis_samples = ea.micro_basis.samples();
+    if (report.micro_basis_samples > 0) {
+      report.micro_basis_mean = ea.micro_basis.mean();
     }
     if (ea.poly_spread.samples() > 0) {
       report.poly_spread_mean = ea.poly_spread.mean();

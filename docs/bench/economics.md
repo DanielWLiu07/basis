@@ -76,6 +76,40 @@ breaking. Quote noise and executable opportunity are different things,
 which is the same lesson the fee ladder teaches on the synthetic side -
 and here it is on live data.
 
+## Where the mid is not fair value (live capture)
+
+Every basis number above is built on mid prices. The mid ignores how much
+size is standing on each side, and the size-weighted microprice does not:
+
+    microprice = (bid * ask_size + ask * bid_size) / (bid_size + ask_size)
+
+Each price is weighted by the OPPOSITE side's size, because a heavy bid
+queue means the next trade is likelier to lift the offer than to hit the
+bid. Queue imbalance, (bid_size - ask_size) / total, is the same
+information as a number in [-1, 1].
+
+On the committed 30-minute capture, 13 Polymarket events were two-sided:
+
+    bid-heavy events        11 of 13      (mean imbalance +0.44)
+    mean microprice - mid   +7.99 cents
+    mean spread             23.8 cents
+
+    wide books  (spread > 20c)   +9.88c gap over 10 events
+    tight books (spread <= 20c)  +1.72c gap over 3 events
+
+The gap scales with the spread, which is the honest reading: on a book
+quoted 30 cents wide with a lopsided queue, the mid is not an estimate of
+fair value, it is the middle of a gap nobody is trading in. The
+size-weighted price sits about ten cents higher. A mid-based basis on
+those markets is measuring quoting artifacts as much as value, and the
+tight-book events are where the mid-based numbers can be trusted.
+
+This does not invalidate the crossable-dislocation ladder, which never
+used mids: crossable requires one venue's best BID above the other's best
+ASK, both executable prices. It qualifies the divergence statistics, and
+the report now prints the microprice basis beside the mid basis so the
+two can be compared per event.
+
 Real-capture versions of the cross-venue numbers wait on the simultaneous
 both-venue recording (Kalshi credentials); the pipeline and gates run
 unchanged on a live feedlog.
