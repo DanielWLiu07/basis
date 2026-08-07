@@ -718,6 +718,12 @@ int run_lob_bench_cmd(const std::vector<std::string_view>& args) {
     basis::log::error("lob-bench: ladder and map books disagreed on fills");
     return 1;
   }
+  const auto pct = [](const char* name,
+                      const basis::bench::LatencyPercentiles& p) {
+    std::printf("LOB_LATENCY %-6s n=%-9llu p50=%.0fns p99=%.0fns "
+                "p99.9=%.0fns max=%.0fns\n",
+                name, u(p.samples), p.p50, p.p99, p.p999, p.max);
+  };
   std::printf("LOB_BENCH ops=%llu fills=%llu filled_contracts=%lld "
               "ladder_ns_per_op=%.1f map_ns_per_op=%.1f speedup=%.2fx "
               "ladder_ops_per_sec=%.0f agreed=1\n",
@@ -725,6 +731,17 @@ int run_lob_bench_cmd(const std::vector<std::string_view>& args) {
               static_cast<long long>(r.filled_size),
               r.ladder_ns_per_op, r.map_ns_per_op, r.speedup,
               r.ladder_ns_per_op > 0.0 ? 1e9 / r.ladder_ns_per_op : 0.0);
+  // Per-operation tail latency. Each sample includes one clock-read pair,
+  // reported as timer_overhead so the numbers stay raw.
+  std::printf("LOB_LATENCY clock_tick=%.0fns (per-op p50 sits on this "
+              "floor; the accurate central number is the throughput mean "
+              "above)\n", r.timer_overhead_ns);
+  pct("rest", r.rest_latency);
+  pct("cross", r.cross_latency);
+  pct("cancel", r.cancel_latency);
+  pct("rest*", r.rest_latency_growing);
+  std::printf("LOB_LATENCY rest* is the same path on a book that was not "
+              "pre-sized: container growth shows up only in the tail\n");
   return 0;
 }
 

@@ -92,6 +92,13 @@ class LimitOrderBook {
   std::int64_t level_size(model::Side side, int price_cents) const;
   std::int64_t total_size(model::Side side) const;
 
+  // Pre-sizes the order slab and the id index for `orders` live orders.
+  // Without it the tail latency of an otherwise O(1) submit is dominated
+  // by container growth: a vector reallocation copies the whole slab and
+  // a hash rehash walks every live order, both of which land on whichever
+  // unlucky order triggers them. A venue sizes this to its expected book.
+  void reserve(std::size_t orders);
+
   std::size_t live_orders() const { return index_of_id_.size(); }
   bool empty() const { return index_of_id_.empty(); }
   void clear();

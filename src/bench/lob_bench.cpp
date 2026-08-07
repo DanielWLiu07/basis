@@ -1,5 +1,6 @@
 #include "bench/lob_bench.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <list>
@@ -184,6 +185,87 @@ class MapBook {
   std::unordered_map<OrderId, Location> loc_;
 };
 
+// Smallest nonzero gap between back-to-back clock reads: the clock's
+// tick. On Apple Silicon this is ~41.7 ns (a 24 MHz timebase), which is
+// the same order as one book operation - so a per-op median lands on the
+// tick rather than on the operation, and only the tail, whose samples are
+// multiples of the tick, carries information. The accurate central number
+// is the throughput mean, which amortizes over millions of operations.
+double calibrate_timer_ns() {
+  constexpr int kSamples = 4096;
+  double smallest = 1e9;
+  for (int i = 0; i < kSamples; ++i) {
+    const auto a = std::chrono::steady_clock::now();
+    const auto b = std::chrono::steady_clock::now();
+    const double d = static_cast<double>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(b - a).count());
+    if (d > 0.0 && d < smallest) smallest = d;
+  }
+  return smallest == 1e9 ? 0.0 : smallest;
+}
+
+LatencyPercentiles percentiles_of(std::vector<double>& samples) {
+  LatencyPercentiles p;
+  p.samples = samples.size();
+  if (samples.empty()) return p;
+  std::sort(samples.begin(), samples.end());
+  const auto pick = [&](double q) {
+    const std::size_t idx = static_cast<std::size_t>(
+        q * static_cast<double>(samples.size() - 1));
+    return samples[idx];
+  };
+  p.p50 = pick(0.50);
+  p.p99 = pick(0.99);
+  p.p999 = pick(0.999);
+  p.max = samples.back();
+  return p;
+}
+
+// Second ladder pass, timing each operation on its own. Kept separate from
+// replay_ladder so the throughput number above is never inflated by
+// per-op clock reads.
+struct LatencySplit {
+  std::vector<double> rest;
+  std::vector<double> cross;
+  std::vector<double> cancel;
+};
+
+LatencySplit measure_ladder_latency(const std::vector<Op>& ops,
+                                    std::size_t reserve_orders) {
+  LimitOrderBook book;
+  if (reserve_orders > 0) book.reserve(reserve_orders);
+  std::vector<exec::Fill> fills;
+  fills.reserve(64);
+  LatencySplit split;
+  split.rest.reserve(ops.size() / 2);
+  split.cross.reserve(ops.size() / 8);
+  split.cancel.reserve(ops.size() / 3);
+  for (const Op& op : ops) {
+    if (op.cancel) {
+      const auto t0 = std::chrono::steady_clock::now();
+      const bool hit = book.cancel(op.id);
+      const auto t1 = std::chrono::steady_clock::now();
+      if (hit) {
+        split.cancel.push_back(static_cast<double>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()));
+      }
+      continue;
+    }
+    fills.clear();
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto r = book.submit(op.id, op.side, op.price, op.size, op.tif, &fills);
+    const auto t1 = std::chrono::steady_clock::now();
+    const double ns = static_cast<double>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    if (r.filled > 0) {
+      split.cross.push_back(ns);
+    } else if (r.resting > 0) {
+      split.rest.push_back(ns);
+    }
+  }
+  return split;
+}
+
 ReplayOutcome replay_ladder(const std::vector<Op>& ops) {
   LimitOrderBook book;
   std::vector<exec::Fill> fills;
@@ -247,6 +329,17 @@ LobBenchResult run_lob_bench(std::uint64_t n_ops, std::uint32_t seed) {
   r.ladder_ns_per_op = ladder.ns / n;
   r.map_ns_per_op = map.ns / n;
   r.speedup = ladder.ns > 0.0 ? map.ns / ladder.ns : 0.0;
+
+  r.timer_overhead_ns = calibrate_timer_ns();
+  // Pre-sized to the flow's live-order high-water mark, which is what a
+  // venue would do; then again with growth left in, to price the tail
+  // that pre-sizing removes.
+  LatencySplit sized = measure_ladder_latency(ops, ops.size());
+  r.rest_latency = percentiles_of(sized.rest);
+  r.cross_latency = percentiles_of(sized.cross);
+  r.cancel_latency = percentiles_of(sized.cancel);
+  LatencySplit growing = measure_ladder_latency(ops, 0);
+  r.rest_latency_growing = percentiles_of(growing.rest);
   return r;
 }
 
