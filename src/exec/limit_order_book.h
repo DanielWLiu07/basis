@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -98,6 +99,12 @@ class LimitOrderBook {
   // a hash rehash walks every live order, both of which land on whichever
   // unlucky order triggers them. A venue sizes this to its expected book.
   void reserve(std::size_t orders);
+
+  // Contracts resting ahead of `id` in its price level's FIFO: the volume
+  // that must trade (or cancel) at that price before this order sees a
+  // fill. nullopt when the id is not live. O(orders ahead), which is a
+  // diagnostic cost, not a hot-path one - nothing in matching needs it.
+  std::optional<std::int64_t> queue_ahead(OrderId id) const;
 
   std::size_t live_orders() const { return index_of_id_.size(); }
   bool empty() const { return index_of_id_.empty(); }

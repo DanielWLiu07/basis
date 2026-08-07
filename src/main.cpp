@@ -764,6 +764,11 @@ int run_lob_bench_cmd(const std::vector<std::string_view>& args) {
   pct("rest*", r.rest_latency_growing);
   std::printf("LOB_LATENCY rest* is the same path on a book that was not "
               "pre-sized: container growth shows up only in the tail\n");
+  std::printf("LOB_PASSIVE orders=%llu filled=%llu fill_rate=%.3f "
+              "queue_ahead_median_filled=%.0f "
+              "queue_ahead_median_unfilled=%.0f\n",
+              u(r.passive_orders), u(r.passive_filled), r.passive_fill_rate,
+              r.queue_ahead_median_filled, r.queue_ahead_median_unfilled);
   return 0;
 }
 

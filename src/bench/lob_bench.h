@@ -46,6 +46,17 @@ struct LobBenchResult {
   LatencyPercentiles rest_latency_growing;
   LatencyPercentiles cross_latency;   // submit that matches at least once
   LatencyPercentiles cancel_latency;  // cancel of a live order
+
+  // Passive-fill study: of the orders that rested, how many ever traded,
+  // and what queue position they joined at. Queue position is the volume
+  // resting ahead of an order when it is placed - what must trade or
+  // cancel before it fills - so it is the natural predictor of whether a
+  // passive quote gets filled at all.
+  std::uint64_t passive_orders = 0;
+  std::uint64_t passive_filled = 0;          // traded at least once
+  double passive_fill_rate = 0.0;            // filled / orders
+  double queue_ahead_median_filled = 0.0;    // contracts, orders that filled
+  double queue_ahead_median_unfilled = 0.0;  // contracts, orders that did not
 };
 
 // n_ops order-flow operations against a book seeded to a realistic depth.
