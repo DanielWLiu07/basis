@@ -191,6 +191,29 @@ ingest-to-signal latency PLAN.md talks about.
   the dialect at link time); the rest of the engine sees only
   `std::pmr::memory_resource`, whose ABI does not vary by dialect.
 
+### exec
+
+- `LimitOrderBook`: price-time-priority book with matching (Gtc/Ioc/Fok).
+  The venue side of the engine, and the only module that produces market
+  events rather than consuming them.
+- The ladder is a flat array of 99 price slots with a two-word occupancy
+  bitmap, not a map or tree, because prediction-market contracts settle
+  at $0 or $1 and every resting price is therefore an integer cent in
+  1..99. Price lookup is an array index; best bid and ask are a bit scan
+  (`std::countl_zero` / `countr_zero`). Orders live in a slab with a free
+  list so steady-state churn allocates nothing, and each level is an
+  intrusive FIFO of slab indices, which makes time priority exact and
+  cancellation position-independent.
+- It is not decoration. Two checks in CI keep the analytics honest against
+  it: a differential test against a textbook std::map book over 200k
+  random operations, and a cross-validation where executing a crossed
+  sweep as order flow must reproduce `model::crossed_sweep_cents` exactly.
+  Where the analytics computes an executable number arithmetically, the
+  engine gets the same number by executing it.
+- `queue_ahead` reports a resting order's FIFO position, which is what
+  the passive-fill study in the benchmark is built on. It walks the
+  queue; nothing in matching needs it.
+
 ## Capture format (.feedlog)
 
 One record per line, tab-separated:
