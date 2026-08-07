@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <tuple>
 #include <vector>
 
 #include "bench/lob_bench.h"
@@ -310,4 +311,25 @@ TEST(LobBench, LadderAndReferenceBookProduceIdenticalFills) {
   EXPECT_GT(r.filled_size, 0);
   EXPECT_GT(r.ladder_ns_per_op, 0.0);
   EXPECT_GT(r.map_ns_per_op, 0.0);
+}
+
+TEST(LimitOrderBook, ReserveChangesTimingNotBehaviour) {
+  // Pre-sizing is a latency-tail fix, not a semantic one: the same flow
+  // through a reserved and an unreserved book must land in the same state.
+  const auto run = [](bool reserved) {
+    LimitOrderBook book;
+    if (reserved) book.reserve(4096);
+    std::vector<Fill> fills;
+    for (int i = 0; i < 600; ++i) {
+      book.submit(static_cast<basis::exec::OrderId>(i),
+                  (i % 2 == 0) ? Side::Bid : Side::Ask,
+                  (i % 2 == 0) ? 40 + (i % 5) : 60 - (i % 5), 10 + (i % 7),
+                  TimeInForce::Gtc, &fills);
+      if (i % 3 == 0) book.cancel(static_cast<basis::exec::OrderId>(i / 2));
+    }
+    return std::tuple{book.best_bid(), book.best_ask(),
+                      book.total_size(Side::Bid), book.total_size(Side::Ask),
+                      book.live_orders(), fills.size()};
+  };
+  EXPECT_EQ(run(true), run(false));
 }

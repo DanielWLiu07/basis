@@ -84,6 +84,39 @@ with any prediction-market venue's message rate by three orders of
 magnitude); the ratio is the evidence that the bounded-price insight is
 worth the specialized layout.
 
+## Tail latency
+
+A mean hides what an execution path cares about. `lob-bench` also times
+each operation individually and reports percentiles per operation class.
+Two honesty notes come with those numbers:
+
+- The clock ticks at about 41.7 ns on Apple Silicon (a 24 MHz timebase),
+  which is the same order as one book operation. The per-op p50 therefore
+  lands on the tick rather than on the operation, and is reported as the
+  floor it is. The accurate central number is the throughput mean above,
+  which amortizes over millions of operations.
+- Every sample includes one clock-read pair. That cost is measured in the
+  same run and reported, never subtracted.
+
+The tail is where the information is, and measuring it found something.
+On a book that grows on demand, the resting path's maximum was 320
+microseconds: not the matching logic, but the order slab reallocating and
+the id index rehashing, both of which land on whichever unlucky order
+triggers them. `LimitOrderBook::reserve()` pre-sizes both, which is what a
+venue would do with its expected book depth. Same flow, 2,000,000
+operations:
+
+    rest, pre-sized     p50 41ns   p99  42ns   p99.9 125ns   max  34.6us
+    rest, growing       p50 41ns   p99  83ns   p99.9 167ns   max 320.8us
+    cross, pre-sized    p50 41ns   p99 167ns   p99.9 375ns   max  25.5us
+    cancel, pre-sized   p50 42ns   p99 417ns   p99.9 709ns   max  30.4us
+
+The medians are identical: pre-sizing buys nothing on the common path and
+removes an order of magnitude from the worst case. What remains at tens of
+microseconds is machine noise (scheduling, page faults) rather than the
+book, which is why the fix is stated as a tail result and not a throughput
+one.
+
 `scripts/perf_gate.sh` runs the benchmark on every commit and fails the
 build if the two books disagree on any fill or if throughput falls an
 order of magnitude below developer hardware.

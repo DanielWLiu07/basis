@@ -192,6 +192,12 @@ std::int64_t LimitOrderBook::total_size(model::Side side) const {
   return ladder(side).total;
 }
 
+void LimitOrderBook::reserve(std::size_t orders) {
+  slab_.reserve(orders);
+  free_slots_.reserve(orders);
+  index_of_id_.reserve(orders);
+}
+
 void LimitOrderBook::clear() {
   bids_ = Ladder{};
   asks_ = Ladder{};
