@@ -33,8 +33,11 @@ records real sessions over TLS WebSocket, and the Kalshi adapter (signed
 session, gap-triggered re-snapshot) is verified offline down to the RSA-PSS
 signature and waits only on account credentials for its first live capture.
 The hot path is zero-copy and allocator-instrumented, benchmarked against
-Bloomberg's BDE arenas (`docs/bench/allocator.md`). See `PLAN.md` for the
-full spec and `docs/design.md` for how the code is put together.
+Bloomberg's BDE arenas (`docs/bench/allocator.md`). A price-time-priority
+matching engine (`docs/bench/matching_engine.md`) runs both as a
+throughput benchmark and as an independent check on the analytics. See
+`PLAN.md` for the full spec and `docs/design.md` for how the code is put
+together.
 
 ## Build and run
 
@@ -121,11 +124,23 @@ zero message loss across the thread boundary is measured, not assumed:
 feed (Kalshi, Polymarket)  ->  normalize + match  ->  unified order book
                                                             |
                                                        analytics
-                                        (divergence, lead-lag, crossed-book
-                                         economics net of venue fees)
+                                        (divergence, lead-lag, microprice,
+                                         crossed-book economics net of fees
+                                         and of reaction delay)
                                                             |
                                           BLPAPI-style subscription API
+
+matching engine (exec/)  ->  price-time priority book, Gtc/Ioc/Fok
+                             cross-checks the analytics by executing
+                             the same sweeps as order flow
 ```
+
+The consuming path above is one direction; `exec/` is the other. It is a
+price-time-priority matching engine whose ladder is a flat 99-slot array
+because prediction-market prices are integer cents, and it exists for
+more than completeness: the arbitrage numbers the analytics report are
+recomputed by executing the same sweeps through it as order flow, so the
+two must agree (`docs/bench/matching_engine.md`).
 
 The hot parse-and-normalize path is zero-copy (market ids are views into
 the parser buffer) and every allocation site draws from an injectable
