@@ -203,6 +203,15 @@ every figure traces to one command. Recorded so far:
   the registry parser under ASan and UBSan, 100k executions per target
   per commit, 2M per target in local deep runs, zero findings in project
   code to date.
+- `docs/bench/matching_engine.md`: the price-time-priority book sustains
+  28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook std::map
+  book replaying identical order flow, with per-class tail latency
+  reported honestly against the clock's 41.7 ns tick. Measuring that tail
+  found the resting path's 320 us worst case in container growth;
+  pre-sizing cut it to 34.6 us with identical medians. A passive-fill
+  study over the same flow separates fills from never-fills by queue
+  position at placement: 3,600 contracts ahead versus 126,234, a 35x
+  split, with 80.4% of resting orders eventually trading.
 - Crossable dislocations are priced as a ladder, each rung answering the
   question the previous one raises: how often the books cross, how long
   the episodes persist, how deep they run, what one taker order at the
