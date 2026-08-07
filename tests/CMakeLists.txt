@@ -3,6 +3,7 @@ include(GoogleTest)
 add_executable(basis_tests
   test_fees.cpp
   test_limit_order_book.cpp
+  test_microstructure.cpp
   test_order_book.cpp
   test_unified_book.cpp
   test_kalshi_parser.cpp

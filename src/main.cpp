@@ -341,6 +341,12 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"crossable_net_sweep_mean_dollars\": %.4f, "
                 "\"crossable_net_sweep_max_dollars\": %.4f, "
                 "\"crossable_sweepable_updates\": %llu, "
+                "\"kalshi_imbalance_mean\": %.4f, "
+                "\"poly_imbalance_mean\": %.4f, "
+                "\"kalshi_micro_minus_mid_mean\": %.4f, "
+                "\"poly_micro_minus_mid_mean\": %.4f, "
+                "\"micro_basis_mean\": %.4f, "
+                "\"micro_basis_samples\": %llu, "
                 "\"survival_open_mean_dollars\": %.4f, "
                 "\"survival_50ms_mean_dollars\": %.4f, "
                 "\"survival_50ms_episodes\": %llu, "
@@ -374,6 +380,9 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.crossable_net_sweep_mean_dollars,
                 e.crossable_net_sweep_max_dollars,
                 u(e.crossable_sweepable_updates),
+                e.kalshi_imbalance_mean, e.poly_imbalance_mean,
+                e.kalshi_micro_minus_mid_mean, e.poly_micro_minus_mid_mean,
+                e.micro_basis_mean, u(e.micro_basis_samples),
                 e.episode_net_sweep_after_mean_dollars[0],
                 e.episode_net_sweep_after_mean_dollars[1],
                 u(e.episodes_alive_after[1]),
@@ -561,6 +570,19 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     u(
                         event.crossable_sweepable_updates),
                     u(event.crossable_updates));
+        // Size-weighted view: where the microprice sits relative to the
+        // mid the basis is built on, and how lopsided each queue is.
+        if (event.micro_basis_samples > 0) {
+          std::printf("           microprice: kalshi imbalance %+.2f "
+                      "(micro-mid %+.2fc), poly imbalance %+.2f "
+                      "(micro-mid %+.2fc), micro basis %+.2fc vs mid basis "
+                      "%+.2fc\n",
+                      event.kalshi_imbalance_mean,
+                      event.kalshi_micro_minus_mid_mean,
+                      event.poly_imbalance_mean,
+                      event.poly_micro_minus_mid_mean,
+                      event.micro_basis_mean, event.basis_mean);
+        }
         // The time dimension of the same answer: what is still standing
         // for a taker who needs 50/100/250 ms to react after an episode
         // opens. Means are over all episodes, expired ones counting zero,

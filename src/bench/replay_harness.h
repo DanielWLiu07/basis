@@ -103,6 +103,22 @@ struct ReplayStats {
     // quoting noise.
     double kalshi_spread_mean = -1.0;
     double poly_spread_mean = -1.0;
+    // Microstructure at the touch, over updates where that venue was
+    // two-sided. Queue imbalance in [-1, 1] (positive = heavier bid).
+    // micro_minus_mid is the size-weighted price minus the naive mid, in
+    // cents: where it is systematically nonzero, a mid-based basis is
+    // measuring something the size-weighted price disagrees with. -2 is
+    // the never-two-sided sentinel (the real range is [-1, 1] and the
+    // spread cannot exceed 99 cents).
+    double kalshi_imbalance_mean = -2.0;
+    double poly_imbalance_mean = -2.0;
+    double kalshi_micro_minus_mid_mean = -100.0;
+    double poly_micro_minus_mid_mean = -100.0;
+    // The basis recomputed on microprices instead of mids, over the same
+    // samples. If the two means differ, the headline basis carries a
+    // queue-imbalance bias.
+    double micro_basis_mean = 0.0;
+    std::uint64_t micro_basis_samples = 0;
     // Updates where both venues were two-sided, and how many of those were a
     // crossable cross-venue dislocation (best bid on one > best ask on the
     // other): an actual, fees-aside arbitrage between the books.
@@ -295,6 +311,11 @@ class ReplayHarness {
     // to carry the mean/min/max bid-ask spread for each venue.
     analytics::DivergenceTracker kalshi_spread;
     analytics::DivergenceTracker poly_spread;
+    analytics::DivergenceTracker kalshi_imbalance;
+    analytics::DivergenceTracker poly_imbalance;
+    analytics::DivergenceTracker kalshi_micro_gap;
+    analytics::DivergenceTracker poly_micro_gap;
+    analytics::DivergenceTracker micro_basis;
     std::uint64_t two_sided_updates = 0;
     std::uint64_t crossable_updates = 0;
     // Crossed-run state: a run opens on the first crossed update after an
