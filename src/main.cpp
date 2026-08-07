@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "analytics/consensus.h"
+#include "bench/fanout_bench.h"
 #include "bench/lob_bench.h"
 #include "bench/replay_harness.h"
 #include "bench/synth_generator.h"
@@ -70,6 +71,11 @@ int usage() {
       "                   (recv_ns,event_id,field,value) for plotting\n"
       "      --episodes-csv <file> one row per crossed episode, incl. the\n"
       "                            surviving sweep at open/50/100/250 ms\n"
+      "\n"
+      "  basis fanout-bench [--subscribers N] [--slow K] [--updates M]\n"
+      "                     [--slow-us U]\n"
+      "      subscription fan-out with slow consumers: the same update\n"
+      "      stream through the synchronous session and the conflating one\n"
       "\n"
       "  basis lob-bench [--ops N] [--seed S]\n"
       "      matching-engine microbenchmark: replays one deterministic order\n"
@@ -772,6 +778,41 @@ int run_lob_bench_cmd(const std::vector<std::string_view>& args) {
   return 0;
 }
 
+// Subscription fan-out under a slow consumer: the same update stream
+// through the synchronous session (handlers inline on the publisher) and
+// the conflating one (publisher slots values, consumers drain).
+int run_fanout_bench_cmd(const std::vector<std::string_view>& args) {
+  const auto subs = flag_value(args, "--subscribers", 64);
+  const auto slow = flag_value(args, "--slow", 1);
+  const auto updates = flag_value(args, "--updates", 20'000);
+  const auto slow_us = flag_value(args, "--slow-us", 50);
+  if (!subs || *subs <= 0 || *subs > 4'096 ||
+      !slow || *slow < 0 || *slow > *subs ||
+      !updates || *updates <= 0 || *updates > 10'000'000 ||
+      !slow_us || *slow_us < 0 || *slow_us > 100'000) {
+    basis::log::error("fanout-bench: bad flag value");
+    return usage();
+  }
+  const auto r = basis::bench::run_fanout_bench(
+      static_cast<std::uint64_t>(*subs), static_cast<std::uint64_t>(*slow),
+      static_cast<std::uint64_t>(*updates),
+      static_cast<std::uint64_t>(*slow_us));
+  std::printf("FANOUT subscribers=%llu slow=%llu slow_handler_us=%llu "
+              "updates=%llu\n",
+              u(r.subscribers), u(r.slow_subscribers), u(r.slow_handler_us),
+              u(r.updates));
+  std::printf("FANOUT sync        publish_ms=%.1f updates_per_sec=%.0f\n",
+              r.sync_publish_ms, r.sync_updates_per_sec);
+  std::printf("FANOUT conflating  publish_ms=%.1f updates_per_sec=%.0f "
+              "speedup=%.1fx\n",
+              r.conflating_publish_ms, r.conflating_updates_per_sec,
+              r.speedup);
+  std::printf("FANOUT delivered=%llu conflated=%llu "
+              "worst_staleness_updates=%llu\n",
+              u(r.delivered), u(r.conflated), u(r.worst_staleness_updates));
+  return 0;
+}
+
 int run_replay(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
   const std::string in_path(args[0]);
@@ -1275,6 +1316,7 @@ int main(int argc, char** argv) {
   const auto command = args[0];
   const std::vector<std::string_view> rest(args.begin() + 1, args.end());
   if (command == "lob-bench") return run_lob_bench_cmd(rest);
+  if (command == "fanout-bench") return run_fanout_bench_cmd(rest);
   if (command == "synth") return run_synth(rest);
   if (command == "replay") return run_replay(rest);
 #ifdef BASIS_HAS_NET

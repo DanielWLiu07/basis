@@ -49,11 +49,13 @@ add_library(basis_analytics
 target_link_libraries(basis_analytics PUBLIC basis_model)
 
 add_library(basis_api
+  api/conflating_session.cpp
   api/in_process_session.cpp
 )
 target_link_libraries(basis_api PUBLIC basis_model)
 
 add_library(basis_bench
+  bench/fanout_bench.cpp
   bench/lob_bench.cpp
   bench/latency_recorder.cpp
   bench/replay_harness.cpp
