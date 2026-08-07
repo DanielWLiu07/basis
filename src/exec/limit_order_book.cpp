@@ -192,6 +192,19 @@ std::int64_t LimitOrderBook::total_size(model::Side side) const {
   return ladder(side).total;
 }
 
+std::optional<std::int64_t> LimitOrderBook::queue_ahead(OrderId id) const {
+  const auto it = index_of_id_.find(id);
+  if (it == index_of_id_.end()) return std::nullopt;
+  const Order& target = slab_[it->second];
+  const Ladder& l = ladder(target.side);
+  std::int64_t ahead = 0;
+  for (std::uint32_t idx = l.levels[target.price].head;
+       idx != kNil && idx != it->second; idx = slab_[idx].next) {
+    ahead += slab_[idx].size;
+  }
+  return ahead;
+}
+
 void LimitOrderBook::reserve(std::size_t orders) {
   slab_.reserve(orders);
   free_slots_.reserve(orders);

@@ -333,3 +333,33 @@ TEST(LimitOrderBook, ReserveChangesTimingNotBehaviour) {
   };
   EXPECT_EQ(run(true), run(false));
 }
+
+TEST(LimitOrderBook, QueueAheadTracksFifoPosition) {
+  LimitOrderBook book;
+  rest(book, 1, Side::Bid, 50, 100);
+  rest(book, 2, Side::Bid, 50, 40);
+  rest(book, 3, Side::Bid, 50, 25);
+  rest(book, 4, Side::Bid, 49, 10);  // different level, own queue
+
+  EXPECT_EQ(*book.queue_ahead(1), 0);    // first in line
+  EXPECT_EQ(*book.queue_ahead(2), 100);
+  EXPECT_EQ(*book.queue_ahead(3), 140);
+  EXPECT_EQ(*book.queue_ahead(4), 0);    // front of its own price
+  EXPECT_FALSE(book.queue_ahead(99).has_value());  // never existed
+
+  // A cancel ahead of you advances you without any trade happening.
+  ASSERT_TRUE(book.cancel(1));
+  EXPECT_EQ(*book.queue_ahead(2), 0);
+  EXPECT_EQ(*book.queue_ahead(3), 40);
+
+  // A partial fill of the order ahead leaves its remainder ahead of you.
+  std::vector<Fill> fills;
+  book.submit(50, Side::Ask, 50, 30, TimeInForce::Ioc, &fills);
+  EXPECT_EQ(*book.queue_ahead(3), 10);   // order 2 has 10 of 40 left
+  EXPECT_FALSE(book.queue_ahead(1).has_value());  // gone
+
+  // Once everything ahead is consumed, you are at the front.
+  fills.clear();
+  book.submit(51, Side::Ask, 50, 10, TimeInForce::Ioc, &fills);
+  EXPECT_EQ(*book.queue_ahead(3), 0);
+}

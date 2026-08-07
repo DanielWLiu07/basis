@@ -117,6 +117,32 @@ microseconds is machine noise (scheduling, page faults) rather than the
 book, which is why the fix is stated as a tail result and not a throughput
 one.
 
+## Queue position and passive fills
+
+`queue_ahead(order_id)` reports the contracts resting ahead of an order in
+its price level's FIFO: what must trade or cancel before that order sees a
+fill. It is a diagnostic, not a hot-path call (it walks the queue), and it
+turns the book into a way to ask a maker's question instead of a taker's.
+
+The benchmark uses it for a passive-fill study. Every order that rests is
+recorded with the queue position it joined at, and marked if it ever
+trades. Over the same 2,000,000-operation flow:
+
+    passive orders            811,998
+    ever filled               652,764   (80.4%)
+    median queue ahead, filled      3,600 contracts
+    median queue ahead, never filled  126,234 contracts
+
+A 35x separation. Queue position at placement, which is knowable the
+instant an order is sent, separates the fills from the never-fills far
+better than anything about the order itself. That is the maker-side
+counterpart to the reaction-latency ladder in docs/bench/economics.md:
+the taker's edge decays in about a quarter second, and the maker's fill
+probability is set by where the queue puts them.
+
+Both numbers come from simulated flow, not live venue data, so they
+characterize the engine and the flow model rather than a real market.
+
 `scripts/perf_gate.sh` runs the benchmark on every commit and fails the
 build if the two books disagree on any fill or if throughput falls an
 order of magnitude below developer hardware.

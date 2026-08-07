@@ -266,6 +266,52 @@ LatencySplit measure_ladder_latency(const std::vector<Op>& ops,
   return split;
 }
 
+// Whether a resting order ever traded, against the queue position it
+// joined at. Run as its own pass so nothing here touches the timed
+// replay above.
+struct PassiveStudy {
+  std::vector<double> queue_ahead_filled;
+  std::vector<double> queue_ahead_unfilled;
+};
+
+PassiveStudy study_passive_fills(const std::vector<Op>& ops) {
+  LimitOrderBook book;
+  book.reserve(ops.size());
+  std::vector<exec::Fill> fills;
+  fills.reserve(64);
+  std::unordered_map<OrderId, double> queue_at_placement;
+  std::unordered_map<OrderId, bool> ever_filled;
+  for (const Op& op : ops) {
+    if (op.cancel) {
+      book.cancel(op.id);
+      continue;
+    }
+    fills.clear();
+    const auto r = book.submit(op.id, op.side, op.price, op.size, op.tif, &fills);
+    for (const auto& f : fills) ever_filled[f.maker_id] = true;
+    if (r.resting > 0) {
+      if (const auto ahead = book.queue_ahead(op.id)) {
+        queue_at_placement.emplace(op.id, static_cast<double>(*ahead));
+        ever_filled.emplace(op.id, false);
+      }
+    }
+  }
+  PassiveStudy study;
+  for (const auto& [id, ahead] : queue_at_placement) {
+    const auto it = ever_filled.find(id);
+    const bool filled = it != ever_filled.end() && it->second;
+    (filled ? study.queue_ahead_filled : study.queue_ahead_unfilled)
+        .push_back(ahead);
+  }
+  return study;
+}
+
+double median_of(std::vector<double>& v) {
+  if (v.empty()) return 0.0;
+  std::sort(v.begin(), v.end());
+  return v[v.size() / 2];
+}
+
 ReplayOutcome replay_ladder(const std::vector<Op>& ops) {
   LimitOrderBook book;
   std::vector<exec::Fill> fills;
@@ -340,6 +386,16 @@ LobBenchResult run_lob_bench(std::uint64_t n_ops, std::uint32_t seed) {
   r.cancel_latency = percentiles_of(sized.cancel);
   LatencySplit growing = measure_ladder_latency(ops, 0);
   r.rest_latency_growing = percentiles_of(growing.rest);
+
+  PassiveStudy passive = study_passive_fills(ops);
+  r.passive_filled = passive.queue_ahead_filled.size();
+  r.passive_orders = r.passive_filled + passive.queue_ahead_unfilled.size();
+  if (r.passive_orders > 0) {
+    r.passive_fill_rate = static_cast<double>(r.passive_filled) /
+                          static_cast<double>(r.passive_orders);
+  }
+  r.queue_ahead_median_filled = median_of(passive.queue_ahead_filled);
+  r.queue_ahead_median_unfilled = median_of(passive.queue_ahead_unfilled);
   return r;
 }
 
