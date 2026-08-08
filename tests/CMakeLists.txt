@@ -1,6 +1,7 @@
 include(GoogleTest)
 
 add_executable(basis_tests
+  test_binance_parser.cpp
   test_conflating_session.cpp
   test_fees.cpp
   test_limit_order_book.cpp

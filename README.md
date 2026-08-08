@@ -181,6 +181,15 @@ companion voxel-engine project follows). `scripts/bench.sh` regenerates the
 summary below from the committed capture artifacts through `replay --json`, so
 every figure traces to one command. Recorded so far:
 
+- `docs/bench/ingest.md`: the prediction markets are slow, about 19
+  messages/sec on the committed capture, which makes a latency number hard
+  to interpret. So the engine also ingests Binance, which is there because
+  it produces load: 90 seconds of live public market data across 94
+  symbols, 24,048 messages with zero malformed. The venue sustains 269
+  messages/sec; the same pipeline parses and applies them at 932,471/sec,
+  2.8M deltas/sec. Three and a half orders of magnitude of headroom is the
+  honest reading of every latency figure below - an engine with room over
+  the venues it consumes, not one pushed to its limit.
 - `docs/bench/latency.md`: on a committed 30-minute live capture (34,731
   messages, 266,597 deltas, zero loss), ingest-to-signal latency is
   p50 0.5 us / p99 37 us at ~840k records/sec, stable across runs.

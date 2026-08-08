@@ -8,7 +8,11 @@
 #include <vector>
 
 #include "analytics/consensus.h"
+#include <chrono>
+
 #include "bench/fanout_bench.h"
+#include "feed/binance_parser.h"
+#include "model/unified_book.h"
 #include "bench/lob_bench.h"
 #include "bench/replay_harness.h"
 #include "bench/synth_generator.h"
@@ -71,6 +75,10 @@ int usage() {
       "                   (recv_ns,event_id,field,value) for plotting\n"
       "      --episodes-csv <file> one row per crossed episode, incl. the\n"
       "                            surviving sweep at open/50/100/250 ms\n"
+      "\n"
+      "  basis ingest-bench <capture.feedlog>\n"
+      "      parse + book-apply throughput on a captured venue feed, with\n"
+      "      the venue's own message rate alongside it\n"
       "\n"
       "  basis fanout-bench [--subscribers N] [--slow K] [--updates M]\n"
       "                     [--slow-us U]\n"
@@ -813,6 +821,72 @@ int run_fanout_bench_cmd(const std::vector<std::string_view>& args) {
   return 0;
 }
 
+// Ingest throughput on a captured feed: parse + book apply, the hot path,
+// timed against real venue data rather than a synthetic stream. Reports
+// both the engine's rate and the venue's own message rate from the
+// capture's receive timestamps, because the gap between them is the point.
+int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
+  if (args.empty()) return usage();
+  const std::string path(args[0]);
+  std::ifstream in(path);
+  if (!in) {
+    basis::log::error("ingest-bench: cannot open " + path);
+    return 1;
+  }
+  // Load the whole capture first: this measures parsing, not file IO.
+  std::vector<std::pair<std::int64_t, std::string>> records;
+  std::string line;
+  while (std::getline(in, line)) {
+    const auto t1 = line.find('\t');
+    if (t1 == std::string::npos) continue;
+    const auto t2 = line.find('\t', t1 + 1);
+    if (t2 == std::string::npos) continue;
+    const auto ts = parse_int(std::string_view(line).substr(0, t1));
+    if (!ts) continue;
+    records.emplace_back(*ts, line.substr(t2 + 1));
+  }
+  if (records.empty()) {
+    basis::log::error("ingest-bench: no usable records in " + path);
+    return 1;
+  }
+
+  basis::feed::BinanceParser parser;
+  basis::model::UnifiedBook book;
+  std::uint64_t deltas = 0, ok = 0, ignored = 0, malformed = 0;
+  const auto t0 = std::chrono::steady_clock::now();
+  for (const auto& [recv_ns, payload] : records) {
+    auto r = parser.parse(payload, recv_ns);
+    switch (r.status) {
+      case basis::feed::ParseStatus::Ok: ++ok; break;
+      case basis::feed::ParseStatus::Ignored: ++ignored; break;
+      case basis::feed::ParseStatus::Malformed: ++malformed; break;
+    }
+    for (const auto& d : r.deltas) {
+      book.apply(d);
+      ++deltas;
+    }
+  }
+  const double ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - t0).count();
+
+  const double venue_span_s =
+      static_cast<double>(records.back().first - records.front().first) / 1e9;
+  const double engine_rate = ms > 0.0 ? records.size() * 1000.0 / ms : 0.0;
+  const double venue_rate =
+      venue_span_s > 0.0 ? records.size() / venue_span_s : 0.0;
+  std::printf("INGEST records=%llu ok=%llu ignored=%llu malformed=%llu "
+              "deltas=%llu\n",
+              u(records.size()), u(ok), u(ignored), u(malformed), u(deltas));
+  std::printf("INGEST venue_span_s=%.1f venue_msgs_per_sec=%.0f\n",
+              venue_span_s, venue_rate);
+  std::printf("INGEST engine_ms=%.1f engine_msgs_per_sec=%.0f "
+              "engine_deltas_per_sec=%.0f headroom=%.0fx\n",
+              ms, engine_rate,
+              ms > 0.0 ? deltas * 1000.0 / ms : 0.0,
+              venue_rate > 0.0 ? engine_rate / venue_rate : 0.0);
+  return 0;
+}
+
 int run_replay(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
   const std::string in_path(args[0]);
@@ -1317,6 +1391,7 @@ int main(int argc, char** argv) {
   const std::vector<std::string_view> rest(args.begin() + 1, args.end());
   if (command == "lob-bench") return run_lob_bench_cmd(rest);
   if (command == "fanout-bench") return run_fanout_bench_cmd(rest);
+  if (command == "ingest-bench") return run_ingest_bench_cmd(rest);
   if (command == "synth") return run_synth(rest);
   if (command == "replay") return run_replay(rest);
 #ifdef BASIS_HAS_NET

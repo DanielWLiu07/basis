@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <optional>
 
 #include "model/order_book.h"
@@ -15,7 +16,7 @@ class UnifiedBook {
   UnifiedBook() = default;
   // Both venue books draw their level nodes from `mr`.
   explicit UnifiedBook(std::pmr::memory_resource* mr)
-      : kalshi_(mr), polymarket_(mr) {}
+      : books_{OrderBook(mr), OrderBook(mr), OrderBook(mr)} {}
 
   void apply(const BookDelta& delta);  // routes on delta.venue
 
@@ -27,8 +28,12 @@ class UnifiedBook {
   std::optional<double> basis() const;
 
  private:
-  OrderBook kalshi_;
-  OrderBook polymarket_;
+  static std::size_t index_of(Venue v) { return static_cast<std::size_t>(v); }
+
+  // One book per venue, indexed by the enum. basis() stays the
+  // Kalshi-minus-Polymarket number the analytics are built on; other
+  // venues are carried for their own books rather than paired.
+  std::array<OrderBook, kVenueCount> books_;
 };
 
 }  // namespace basis::model
