@@ -214,6 +214,39 @@ ingest-to-signal latency PLAN.md talks about.
   the passive-fill study in the benchmark is built on. It walks the
   queue; nothing in matching needs it.
 
+## Physical design
+
+The module notes above describe the logical layering; `scripts/levelize.py`
+enforces it, and CI runs it before anything is compiled.
+
+A component is a `.h`/`.cpp` pair. The check builds the include graph over
+`src/`, and fails on three things: a cycle among components, a cycle among
+packages, or a package dependency not declared in the table at the top of
+the script, which mirrors what each library links in `src/CMakeLists.txt`.
+The point of the third rule is that a dependency which compiles because
+everything ends up in one binary is still a design violation; nothing else
+in the build would catch it.
+
+Levelization is the reason to care rather than tidiness. An acyclic graph
+has a first component with no project dependencies, which means it can be
+built, tested and reasoned about on its own, and so can everything above
+it in order. A cycle has no such starting point: every component in it
+needs another one to exist first, so none can be unit tested in isolation.
+
+Current shape:
+
+    package level 1: alloc core model
+    package level 2: analytics api exec feed net normalize
+    package level 3: bench feed_live
+    deepest component level: 6
+
+The check earned itself on the first run. `feed/` held both the offline
+parsers (`basis_feed`, depending on model) and the live WSS adapters
+(`basis_feed_live`, depending on feed and net), so one directory spanned
+two link-time tiers and the physical structure no longer matched the
+logical one. The adapters moved to `feed_live/`, which is why `feed` sits
+at level 2 rather than pulling `net` up behind it.
+
 ## Capture format (.feedlog)
 
 One record per line, tab-separated:

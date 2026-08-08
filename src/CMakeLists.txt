@@ -9,6 +9,11 @@
 #   basis_bench     <- feed + normalize + analytics + api (composition root)
 #   basis_net       <- basis_core (+ Boost.Beast, OpenSSL; BASIS_ENABLE_NET)
 #   basis_feed_live <- basis_feed + basis_net (BASIS_ENABLE_NET)
+#
+# Package directories map one-to-one onto these libraries: feed/ is the
+# offline parse path, feed_live/ the WSS adapters that need net/. They were
+# one directory until scripts/levelize.py pointed out that it spanned two
+# levels, which is the kind of drift a physical-design check exists to catch.
 #   basis (exe)     <- basis_bench (+ basis_feed_live when NET)
 
 add_library(basis_core
@@ -105,8 +110,8 @@ if(BASIS_ENABLE_NET)
     Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
   add_library(basis_feed_live
-    feed/kalshi_feed.cpp
-    feed/polymarket_feed.cpp
+    feed_live/kalshi_feed.cpp
+    feed_live/polymarket_feed.cpp
   )
   target_link_libraries(basis_feed_live PUBLIC basis_feed basis_net)
 

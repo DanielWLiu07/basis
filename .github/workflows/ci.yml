@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Physical design (levelization)
+        run: ./scripts/levelize.py src
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build

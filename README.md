@@ -203,6 +203,12 @@ every figure traces to one command. Recorded so far:
   the registry parser under ASan and UBSan, 100k executions per target
   per commit, 2M per target in local deep runs, zero findings in project
   code to date.
+- `scripts/levelize.py` runs in CI before the build: a physical-design
+  check over the `src/` include graph in the Lakos sense, failing on any
+  component cycle, package cycle, or package dependency not declared to
+  match what each library links. It caught a real one on its first run,
+  where a single directory spanned two link-time tiers
+  (`docs/design.md`).
 - `docs/bench/fanout.md`: the consumer side of distribution. A synchronous
   session runs handlers on the publisher's thread, so the slowest consumer
   sets the publisher's rate: with one 50-microsecond handler the publisher
