@@ -34,8 +34,8 @@
 #include "analytics/lead_lag.h"
 #include "core/bounded_queue.h"
 #include "feed/feed_log.h"
-#include "feed/kalshi_feed.h"
-#include "feed/polymarket_feed.h"
+#include "feed_live/kalshi_feed.h"
+#include "feed_live/polymarket_feed.h"
 #include "net/kalshi_auth.h"
 #include "normalize/normalizer.h"
 #endif
