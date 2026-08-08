@@ -212,7 +212,11 @@ every figure traces to one command. Recorded so far:
   and memory is bounded by subscribers times topics rather than by publish
   rate. At 16 subscribers the publisher runs 46x faster (899k updates/sec),
   and every subscriber including the slow one ends holding the current
-  value: conflation drops the stale middle, never the present.
+  value: conflation drops the stale middle, never the present. Joining is
+  snapshot-then-stream: a consumer connecting mid-session is seeded with
+  the current image under the same lock the publisher fans out beneath, so
+  it can neither miss an update nor receive one older than a value already
+  waiting for it.
 - `docs/bench/matching_engine.md`: the price-time-priority book sustains
   28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook std::map
   book replaying identical order flow, with per-class tail latency

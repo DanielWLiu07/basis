@@ -20,28 +20,56 @@ ConflatingSession::SubscriberId ConflatingSession::add_subscriber() {
   return subscribers_.size() - 1;
 }
 
+void ConflatingSession::slot_locked(Subscriber& sub, TopicId topic,
+                                    const Update& update) {
+  const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+  const auto [slot, inserted] = sub.latest.insert_or_assign(topic, update);
+  (void)slot;
+  bool pending = false;
+  if (!inserted) {
+    for (TopicId t : sub.pending) {
+      if (t == topic) { pending = true; break; }
+    }
+  }
+  if (pending) {
+    ++sub.conflated;  // superseded before anyone read it
+  } else {
+    sub.pending.push_back(topic);
+  }
+}
+
 void ConflatingSession::subscribe_for(SubscriberId id,
                                       const std::string& event_id,
                                       const std::string& field,
                                       Handler handler) {
-  Subscriber* sub = nullptr;
-  TopicId topic = 0;
-  {
-    const std::lock_guard<std::mutex> lock(registry_mutex_);
-    if (stopped_ || id >= subscribers_.size()) return;
-    topic = intern_topic(topic_key(event_id, field));
-    auto& roster = topic_subscribers_[topic];
-    // A subscriber appears once per topic however many handlers it adds,
-    // so publish() writes its slot once.
-    bool listed = false;
-    for (SubscriberId existing : roster) {
-      if (existing == id) { listed = true; break; }
-    }
-    if (!listed) roster.push_back(id);
-    sub = subscribers_[id].get();
+  // Everything here runs under registry_mutex_, the same lock publish()
+  // holds while it fans out. That is what makes the join atomic against
+  // the stream: a publish is ordered wholly before this call (so the
+  // snapshot below carries its value) or wholly after (so the roster
+  // already contains this subscriber and the normal path delivers it).
+  // Registering the handler outside this lock would also lose values: a
+  // publish could slot one while drain() finds no handler for the topic,
+  // skips it, and clears pending.
+  const std::lock_guard<std::mutex> lock(registry_mutex_);
+  if (stopped_ || id >= subscribers_.size()) return;
+  const TopicId topic = intern_topic(topic_key(event_id, field));
+  auto& roster = topic_subscribers_[topic];
+  // A subscriber appears once per topic however many handlers it adds,
+  // so publish() writes its slot once.
+  bool listed = false;
+  for (SubscriberId existing : roster) {
+    if (existing == id) { listed = true; break; }
   }
-  const std::lock_guard<std::mutex> lock(sub->mutex);
-  sub->handlers[topic].push_back(std::move(handler));
+  if (!listed) roster.push_back(id);
+  Subscriber& sub = *subscribers_[id];
+  {
+    const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+    sub.handlers[topic].push_back(std::move(handler));
+  }
+  // Snapshot: hand the joiner the current image so it is useful before
+  // the next tick, which on a quiet market may be minutes away.
+  const auto cached = last_value_.find(topic);
+  if (cached != last_value_.end()) slot_locked(sub, topic, cached->second);
 }
 
 void ConflatingSession::subscribe(const std::string& event_id,
@@ -60,35 +88,19 @@ void ConflatingSession::publish(const Update& update) {
     const std::lock_guard<std::mutex> lock(registry_mutex_);
     if (stopped_) return;
     ++published_;
-    const auto it = topic_ids_.find(topic_key(update.event_id, update.field));
-    if (it == topic_ids_.end()) return;
-    const TopicId topic = it->second;
+    // Intern rather than look up: a topic with no subscribers yet still
+    // needs its image recorded, because that is exactly the value a late
+    // joiner will ask for. Topics come from the contract registry, so the
+    // interned set is bounded by the configured markets.
+    const TopicId topic = intern_topic(topic_key(update.event_id, update.field));
+    // Remember the image so a subscriber joining later starts from it.
+    last_value_.insert_or_assign(topic, update);
     targets.reserve(topic_subscribers_[topic].size());
     for (SubscriberId id : topic_subscribers_[topic]) {
       targets.push_back(subscribers_[id].get());
     }
     queued_ += targets.size();
-    for (Subscriber* sub : targets) {
-      const std::lock_guard<std::mutex> sub_lock(sub->mutex);
-      const auto [slot, inserted] = sub->latest.insert_or_assign(topic, update);
-      (void)slot;
-      if (inserted) {
-        sub->pending.push_back(topic);
-      } else {
-        // The slot already held an undelivered value only if this topic is
-        // pending; otherwise the previous value was delivered and this is
-        // a fresh one.
-        bool already_pending = false;
-        for (TopicId t : sub->pending) {
-          if (t == topic) { already_pending = true; break; }
-        }
-        if (already_pending) {
-          ++sub->conflated;  // superseded before anyone read it
-        } else {
-          sub->pending.push_back(topic);
-        }
-      }
-    }
+    for (Subscriber* sub : targets) slot_locked(*sub, topic, update);
   }
 }
 
