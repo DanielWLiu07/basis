@@ -60,6 +60,38 @@ competing with consumer threads for CPU. That is a property of the test
 harness, not of the session; the 16-subscriber row is the one that shows
 the delivery model's own cost.
 
+## Joining a stream that is already running
+
+A consumer that connects mid-session has a problem the fan-out itself does
+not solve: until the next tick on each topic it knows nothing, and on a
+quiet book that can be minutes of blank screen. The venue answer is
+snapshot-then-stream, and the session does it on subscribe: the last
+published value per topic is cached, and subscribing seeds the joiner's
+slot with it, so its first drain delivers the present image.
+
+The seam is the part worth getting right. Roster insertion, handler
+registration and the snapshot all happen under the same lock publish()
+holds while it fans out, so any concurrent publish is ordered wholly
+before the join (its value is the snapshot) or wholly after (the roster
+already lists the joiner, so the normal path delivers it). The joiner
+cannot miss an update, and cannot be handed an image older than a value
+already waiting in its slot.
+
+Registering the handler outside that lock was a real defect, not a
+hypothetical one: a publish landing in the gap would slot a value while a
+concurrent drain found no handler for the topic, skipped it, and cleared
+the pending set - losing the value until the next tick. Holding one lock
+across the whole join removes the window.
+
+The cache is one entry per topic, so it is bounded by the configured
+market set rather than by subscriber count or publish rate. Publishing
+interns a topic even when nobody is listening yet, because that is
+precisely the value a later joiner will ask for.
+
+A test pins the race directly: 16 subscribers join while a publisher runs
+20,000 updates flat out, and every one of them must end holding the final
+value whichever side of the fan-out its join landed on.
+
 ## Correctness under conflation
 
 Every run reports `worst_staleness_updates`, the largest gap between the

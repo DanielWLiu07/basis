@@ -183,3 +183,109 @@ TEST(ConflatingSession, ConcurrentPublishersAndSubscribersStayConsistent) {
   EXPECT_EQ(st.queued,
             static_cast<std::uint64_t>(kPublishers * kPerPublisher * kSubscribers));
 }
+
+TEST(ConflatingSession, LateJoinerGetsTheCurrentImageWithoutWaitingForATick) {
+  ConflatingSession s;
+  // The market prints, then goes quiet.
+  s.publish(tick("fed", "mid", 47.0));
+  s.publish(tick("fed", "mid", 48.5));
+
+  // A consumer arrives after all of that. Without a snapshot it would see
+  // nothing until the next print, which on a quiet book can be minutes.
+  const auto late = s.add_subscriber();
+  double seen = 0.0;
+  int calls = 0;
+  s.subscribe_for(late, "fed", "mid", [&](const Update& u) {
+    seen = u.value;
+    ++calls;
+  });
+
+  EXPECT_EQ(s.drain(late), 1u);
+  EXPECT_EQ(calls, 1);
+  EXPECT_DOUBLE_EQ(seen, 48.5);  // the current image, not the first print
+
+  // And it is a snapshot, not a replay: the superseded 47.0 is not
+  // delivered, and the stream continues normally afterwards.
+  s.publish(tick("fed", "mid", 49.0));
+  EXPECT_EQ(s.drain(late), 1u);
+  EXPECT_DOUBLE_EQ(seen, 49.0);
+  EXPECT_EQ(calls, 2);
+}
+
+TEST(ConflatingSession, SubscribingToASilentTopicDeliversNothing) {
+  ConflatingSession s;
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.subscribe_for(sub, "wc26", "mid", [&](const Update&) { ++calls; });
+  // Nothing has ever been published on this topic, so there is no image to
+  // hand over and the subscriber correctly sees nothing at all.
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+}
+
+TEST(ConflatingSession, SnapshotDoesNotResurrectAValueAlreadySlotted) {
+  ConflatingSession s;
+  const auto sub = s.add_subscriber();
+  std::vector<double> seen;
+  s.subscribe_for(sub, "fed", "mid",
+                  [&](const Update& u) { seen.push_back(u.value); });
+  s.publish(tick("fed", "mid", 10.0));
+
+  // A second handler on a topic this subscriber already follows must not
+  // re-deliver the cached image on top of the value already waiting: the
+  // subscriber is not "joining" anything it is not already in.
+  s.subscribe_for(sub, "fed", "mid",
+                  [&](const Update& u) { seen.push_back(u.value); });
+  EXPECT_EQ(s.drain(sub), 1u);   // one topic pending, not two
+  ASSERT_EQ(seen.size(), 2u);    // both handlers ran, once each
+  EXPECT_DOUBLE_EQ(seen[0], 10.0);
+  EXPECT_DOUBLE_EQ(seen[1], 10.0);
+}
+
+TEST(ConflatingSession, JoiningDuringAPublishStormNeverMissesTheFinalValue) {
+  // The race the atomic join exists for: subscribers arrive while a
+  // publisher is running flat out. Each one must end holding the last
+  // published value, whichever side of the fan-out its join landed on.
+  ConflatingSession s;
+  constexpr int kUpdates = 20'000;
+  constexpr int kJoiners = 16;
+
+  std::atomic<bool> publishing{true};
+  std::thread publisher([&] {
+    for (int i = 1; i <= kUpdates; ++i) {
+      s.publish(tick("fed", "mid", static_cast<double>(i)));
+    }
+    publishing = false;
+  });
+
+  std::vector<ConflatingSession::SubscriberId> ids;
+  std::vector<std::atomic<double>> last(kJoiners);
+  std::vector<std::thread> joiners;
+  std::mutex ids_mutex;
+  for (int j = 0; j < kJoiners; ++j) {
+    joiners.emplace_back([&, j] {
+      const auto id = s.add_subscriber();
+      {
+        const std::lock_guard<std::mutex> lock(ids_mutex);
+        ids.push_back(id);
+      }
+      s.subscribe_for(id, "fed", "mid",
+                      [&last, j](const Update& u) { last[j] = u.value; });
+      while (publishing) s.drain(id);
+      s.drain(id);
+    });
+  }
+  publisher.join();
+  for (auto& t : joiners) t.join();
+  // Final sweep: publishing has stopped, so one more drain settles anyone
+  // whose last drain raced the final publish.
+  {
+    const std::lock_guard<std::mutex> lock(ids_mutex);
+    for (auto id : ids) s.drain(id);
+  }
+
+  for (int j = 0; j < kJoiners; ++j) {
+    EXPECT_DOUBLE_EQ(last[j].load(), static_cast<double>(kUpdates))
+        << "joiner " << j << " did not end on the final value";
+  }
+}

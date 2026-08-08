@@ -66,6 +66,14 @@ class ConflatingSession final : public Session {
   // session's subscriber set is set up once and torn down with the session.
   SubscriberId add_subscriber();
 
+  // Subscribing delivers the topic's current value on the next drain, if
+  // one has ever been published: a consumer joining a quiet market gets
+  // the present image instead of a blank screen until the next tick. The
+  // seam is the interesting part. Roster insertion, handler registration
+  // and the snapshot all happen under the same lock publish() takes, so a
+  // concurrent publish is ordered strictly before or after the join: the
+  // joiner cannot miss an update, and cannot be handed a snapshot that is
+  // older than a value already slotted for it.
   void subscribe_for(SubscriberId id, const std::string& event_id,
                      const std::string& field, Handler handler);
 
@@ -108,8 +116,17 @@ class ConflatingSession final : public Session {
     std::uint64_t conflated = 0;
   };
 
-  mutable std::mutex registry_mutex_;  // guards topic map and the roster
+  // Slots `update` for `sub`, marking the topic pending and counting a
+  // conflation when it supersedes a value nobody has read. Caller holds
+  // registry_mutex_; this takes the subscriber's lock.
+  static void slot_locked(Subscriber& sub, TopicId topic, const Update& update);
+
+  mutable std::mutex registry_mutex_;  // guards topic map, roster, cache
   std::unordered_map<std::string, TopicId> topic_ids_;
+  // Last published value per topic: the image a late joiner starts from.
+  // One entry per topic, so it is bounded by the topic set and not by
+  // subscriber count or publish rate.
+  std::unordered_map<TopicId, Update> last_value_;
   std::vector<std::vector<SubscriberId>> topic_subscribers_;
   // unique_ptr because a Subscriber holds a mutex: the vector must be able
   // to grow without moving live subscribers.
