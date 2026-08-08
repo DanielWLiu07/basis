@@ -3,15 +3,11 @@
 namespace basis::model {
 
 void UnifiedBook::apply(const BookDelta& delta) {
-  if (delta.venue == Venue::Kalshi) {
-    kalshi_.apply(delta);
-  } else {
-    polymarket_.apply(delta);
-  }
+  books_[index_of(delta.venue)].apply(delta);
 }
 
 const OrderBook& UnifiedBook::book(Venue venue) const {
-  return venue == Venue::Kalshi ? kalshi_ : polymarket_;
+  return books_[index_of(venue)];
 }
 
 std::optional<double> UnifiedBook::mid(Venue venue) const {
@@ -19,8 +15,8 @@ std::optional<double> UnifiedBook::mid(Venue venue) const {
 }
 
 std::optional<double> UnifiedBook::basis() const {
-  const auto k = kalshi_.mid();
-  const auto p = polymarket_.mid();
+  const auto k = books_[index_of(Venue::Kalshi)].mid();
+  const auto p = books_[index_of(Venue::Polymarket)].mid();
   if (!k || !p) return std::nullopt;
   return *k - *p;
 }

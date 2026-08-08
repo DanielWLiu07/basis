@@ -35,6 +35,7 @@ add_library(basis_exec
 target_link_libraries(basis_exec PUBLIC basis_model)
 
 add_library(basis_feed
+  feed/binance_parser.cpp
   feed/kalshi_parser.cpp
   feed/polymarket_parser.cpp
   feed/feed_log.cpp

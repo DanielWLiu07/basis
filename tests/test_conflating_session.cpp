@@ -130,6 +130,19 @@ TEST(ConflatingSession, SlowSubscriberDoesNotStallThePublisher) {
   }
   const auto publish_ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - t0).count();
+
+  // The publisher can finish before the slow consumer's thread is ever
+  // scheduled - that is the whole point of the decoupling, and it is why
+  // asserting on slow_calls right here would be a race rather than a
+  // check. Wait for the consumer to make progress, bounded so a genuine
+  // failure to deliver still fails the test instead of hanging.
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (slow_calls.load() == 0 &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  const int slow_seen = slow_calls.load();
   running = false;
   slow_thread.join();
 
@@ -137,8 +150,8 @@ TEST(ConflatingSession, SlowSubscriberDoesNotStallThePublisher) {
   // publisher were coupled to the consumer this would take many seconds.
   EXPECT_LT(publish_ms, 2'000.0);
   EXPECT_DOUBLE_EQ(fast_last.load(), 2'000.0);  // fast one is current
-  EXPECT_GT(slow_calls.load(), 0);              // slow one still got values
-  EXPECT_LT(slow_calls.load(), 2'000);          // and skipped the stale ones
+  EXPECT_GT(slow_seen, 0);        // the slow one does receive, eventually
+  EXPECT_LT(slow_seen, 2'000);    // having skipped the stale middle
 }
 
 TEST(ConflatingSession, ConcurrentPublishersAndSubscribersStayConsistent) {
