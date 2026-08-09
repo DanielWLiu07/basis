@@ -1,5 +1,6 @@
 #include "api/conflating_session.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace basis::api {
