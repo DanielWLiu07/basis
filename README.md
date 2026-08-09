@@ -293,6 +293,15 @@ every figure traces to one command. Recorded so far:
   engine must reproduce `crossed_sweep_cents` exactly, so the executable
   edge numbers are cross-checked rather than trusted
   (`docs/bench/matching_engine.md`).
+- The complementary YES/NO bound is monitored, an invariant that exists
+  only because these contracts settle at $0 or $1: the two sides are
+  worth exactly $1.00 together, so any gap is riskless. On the committed
+  30-minute capture it effectively never broke. Getting that answer took
+  three attempts, and the failures are the interesting part: comparing
+  prices as doubles manufactured 267 phantom violations (0.53 + 0.47
+  exceeds 1.0 in floating point), and sampling per delta rather than per
+  wire message manufactured more from states that exist only midway
+  through applying one message (`docs/bench/economics.md`).
 - Mutually exclusive outcome groups are watched as baskets on live data:
   best-bid sums are checked against the hard $1 no-arbitrage bound (valid
   even for partial baskets), mid-price sums read the venue's probability

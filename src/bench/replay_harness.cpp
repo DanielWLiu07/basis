@@ -124,6 +124,13 @@ void ReplayHarness::on_event_update(const std::string& event_id,
   if (p_micro && poly_mid) ms.poly_micro_gap.observe(*p_micro - *poly_mid);
   if (k_micro && p_micro) ms.micro_basis.observe(*k_micro - *p_micro);
 
+  // The complementary bound is evaluated once per wire message, not here;
+  // just record that this event moved.
+  if (std::find(dirty_events_.begin(), dirty_events_.end(), event_id) ==
+      dirty_events_.end()) {
+    dirty_events_.push_back(event_id);
+  }
+
   // A crossable cross-venue dislocation: one venue's best bid sits above the
   // other's best ask, so the two markets are crossed and (fees aside) the gap
   // is capturable -- buy the cheaper ask, sell into the richer bid. This is a
@@ -229,6 +236,27 @@ void ReplayHarness::on_event_update(const std::string& event_id,
   }
 }
 
+void ReplayHarness::observe_complementary_at_message_end() {
+  for (const auto& event_id : dirty_events_) {
+    const model::UnifiedBook* ub = normalizer_.book(event_id);
+    if (!ub) continue;
+    const auto& pb = ub->book(model::Venue::Polymarket);
+    const auto bid = pb.best_bid();
+    const auto ask = pb.best_ask();
+    if (!bid || !ask) continue;
+    auto it = analytics_.find(event_id);
+    if (it == analytics_.end()) continue;
+    ++it->second.internal_two_sided;
+    // YES and NO are folded into one book, so a crossed book here means
+    // the two sides together priced the certain $1 payout at more (or
+    // less) than $1: riskless either way, if it is real.
+    if (*bid > *ask) {
+      it->second.internal_cross.observe(static_cast<double>(*bid - *ask));
+    }
+  }
+  dirty_events_.clear();
+}
+
 std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
                                               std::string* error) {
   feed::FeedLogReader reader(feedlog_path);
@@ -287,6 +315,9 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       for (const auto& delta : parsed.deltas) {
         normalizer_.on_delta(delta);
       }
+      // One wire message is the smallest state a consumer could ever have
+      // observed, so invariants are checked here rather than mid-message.
+      observe_complementary_at_message_end();
 
       if (breakdown_) {
         stats_.parse_ns_total += t_parsed - t0;
@@ -355,6 +386,12 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     if (ea.poly_imbalance.samples() > 0) {
       report.poly_imbalance_mean = ea.poly_imbalance.mean();
       report.poly_micro_minus_mid_mean = ea.poly_micro_gap.mean();
+    }
+    report.internal_two_sided_updates = ea.internal_two_sided;
+    report.internal_cross_updates = ea.internal_cross.samples();
+    if (report.internal_cross_updates > 0) {
+      report.internal_cross_max_cents = ea.internal_cross.max();
+      report.internal_cross_mean_cents = ea.internal_cross.mean();
     }
     report.micro_basis_samples = ea.micro_basis.samples();
     if (report.micro_basis_samples > 0) {

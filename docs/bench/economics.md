@@ -51,6 +51,45 @@ The one-line story: the screen shows $3.00; a fee-paying taker with a
 windows still exist. The edge is real and it rots in about a quarter of
 a second.
 
+## The complementary bound, and three ways to measure it wrong
+
+Prediction-market contracts settle at $0 or $1, which gives them an
+invariant nothing in crypto or equities has: YES and NO on one market are
+exhaustive and mutually exclusive, so together they are worth exactly
+$1.00 at settlement. Selling one of each collects YES_bid + NO_bid
+against a certain $1 liability, so any excess over $1.00 is riskless
+money, and symmetrically buying both for under $1.00 is riskless.
+Unlike the multi-outcome baskets below, there is no completeness caveat:
+two complementary contracts are the entire outcome space by construction.
+
+The engine already folds NO quotes into the YES frame (a NO bid at p is a
+YES ask at 100 - p), so a violation is exactly "the folded book is
+internally crossed". Monitoring it is nearly free.
+
+Getting the measurement right took three attempts, and the wrong answers
+are more instructive than the right one:
+
+- Comparing prices as doubles reported 267 violations across the capture.
+  All 267 were floating point: 0.53 + 0.47 is 1.0000000000000002, which
+  is greater than 1.0. In integer cents the same scan reports zero.
+- Sampling after every delta reported 6. One Polymarket price_change
+  message carries several level changes, and between "add the new best
+  bid" and "remove the old best ask" the book is transiently crossed. No
+  consumer could ever have traded that state, because it does not exist
+  between messages. Evaluating once per wire message halves it.
+- What remains is 3 crossings out of 34,285 message-boundary samples, all
+  of exactly one cent, on two World Cup events. An independent recount
+  over the same capture finds zero, and that disagreement is unresolved.
+  They are reported as monitored, not as opportunities.
+
+The honest conclusion is the boring one, and it is worth stating plainly:
+on 30 minutes of live data the complementary bound effectively never
+broke. The venue's own quoting never left a riskless YES/NO trade on the
+table, which is what an efficient market should look like, and it
+independently validates the NO-folding the whole normalizer depends on.
+A claim of "found arbitrage" here would have been an artifact of
+arithmetic in the first instance and of sampling in the second.
+
 ## Real-data basket coherence (the live capture)
 
 Mutually exclusive outcomes obey a hard no-arbitrage bound whether or not
