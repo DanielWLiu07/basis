@@ -9,9 +9,12 @@
 
 #include "analytics/consensus.h"
 #include <chrono>
+#include <cmath>
+#include <map>
 
 #include "bench/fanout_bench.h"
 #include "feed/binance_parser.h"
+#include "feed/book_sequencer.h"
 #include "model/unified_book.h"
 #include "bench/lob_bench.h"
 #include "bench/replay_harness.h"
@@ -28,6 +31,8 @@
 #ifdef BASIS_HAS_NET
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <map>
 #include <csignal>
 #include <map>
 #include <memory>
@@ -75,6 +80,10 @@ int usage() {
       "                   (recv_ns,event_id,field,value) for plotting\n"
       "      --episodes-csv <file> one row per crossed episode, incl. the\n"
       "                            surviving sweep at open/50/100/250 ms\n"
+      "\n"
+      "  basis book-verify <capture.feedlog> [--levels N]\n"
+      "      rebuild a book from a venue diff stream through the sequencer\n"
+      "      and check it against the venue's own snapshot\n"
       "\n"
       "  basis ingest-bench <capture.feedlog>\n"
       "      parse + book-apply throughput on a captured venue feed, with\n"
@@ -887,6 +896,147 @@ int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
   return 0;
 }
 
+// Reconstructs a book from a venue diff stream through the sequencer and
+// checks it against a snapshot the venue produced independently. The
+// capture interleaves three record kinds: diff, snapshot (the one joined
+// from), and validation_snapshot (the one checked against, taken later so
+// the stream runs past it).
+int run_book_verify_cmd(const std::vector<std::string_view>& args) {
+  if (args.empty()) return usage();
+  const std::string path(args[0]);
+  const auto depth = flag_value(args, "--levels", 20);
+  if (!depth || *depth <= 0 || *depth > 1000) {
+    basis::log::error("book-verify: bad --levels");
+    return usage();
+  }
+  std::ifstream in(path);
+  if (!in) {
+    basis::log::error("book-verify: cannot open " + path);
+    return 1;
+  }
+
+  simdjson::dom::parser parser;
+  basis::feed::BookSequencer seq;
+  // price cents -> size, mirroring the venue's own book.
+  std::map<std::int64_t, std::string, std::greater<std::int64_t>> bids;
+  std::map<std::int64_t, std::string> asks;
+  std::string validation;
+  std::int64_t target = -1;
+  bool reached = false;
+
+  const auto to_cents = [](std::string_view s) {
+    return static_cast<std::int64_t>(std::llround(std::strtod(
+        std::string(s).c_str(), nullptr) * 100.0));
+  };
+  const auto load_side = [&](simdjson::dom::element levels, bool bid) {
+    for (auto lv : simdjson::dom::array(levels)) {
+      auto it = simdjson::dom::array(lv).begin();
+      std::string_view px = (*it).get_string().value();
+      ++it;
+      std::string_view qty = (*it).get_string().value();
+      const std::int64_t cents = to_cents(px);
+      const bool empty = std::strtod(std::string(qty).c_str(), nullptr) == 0.0;
+      if (bid) {
+        if (empty) bids.erase(cents); else bids[cents] = std::string(qty);
+      } else {
+        if (empty) asks.erase(cents); else asks[cents] = std::string(qty);
+      }
+    }
+  };
+
+  std::string line;
+  while (std::getline(in, line)) {
+    const auto t1 = line.find('\t');
+    if (t1 == std::string::npos) continue;
+    const auto t2 = line.find('\t', t1 + 1);
+    if (t2 == std::string::npos) continue;
+    const std::string kind = line.substr(t1 + 1, t2 - t1 - 1);
+    const std::string payload = line.substr(t2 + 1);
+    simdjson::dom::element doc;
+    if (parser.parse(simdjson::padded_string(payload)).get(doc) !=
+        simdjson::SUCCESS) {
+      continue;
+    }
+    if (kind == "snapshot") {
+      bids.clear();
+      asks.clear();
+      load_side(doc["bids"], true);
+      load_side(doc["asks"], false);
+      seq.on_snapshot(doc["lastUpdateId"].get_int64().value());
+    } else if (kind == "validation_snapshot") {
+      validation = payload;
+      target = doc["lastUpdateId"].get_int64().value();
+    } else if (kind == "diff" && !reached) {
+      const std::int64_t U = doc["U"].get_int64().value();
+      const std::int64_t u = doc["u"].get_int64().value();
+      switch (seq.on_update(U, u)) {
+        case basis::feed::BookSequencer::Decision::Apply:
+          load_side(doc["b"], true);
+          load_side(doc["a"], false);
+          if (target >= 0 && u >= target) reached = true;
+          break;
+        case basis::feed::BookSequencer::Decision::Gap:
+          // A real feed would refetch here. In a verification run a gap
+          // means the answer is "cannot verify", not a silent retry.
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  const auto& st = seq.stats();
+  std::printf("BOOK_VERIFY applied=%llu discarded=%llu buffered=%llu "
+              "gaps=%llu stale_snapshots=%llu reached_target=%d\n",
+              u(st.applied), u(st.discarded), u(st.buffered), u(st.gaps),
+              u(st.stale_snapshots), reached ? 1 : 0);
+  if (validation.empty() || !reached) {
+    basis::log::error("book-verify: never reached the validation point");
+    return 1;
+  }
+
+  simdjson::dom::element vdoc;
+  if (parser.parse(simdjson::padded_string(validation)).get(vdoc) !=
+      simdjson::SUCCESS) {
+    basis::log::error("book-verify: validation snapshot unparseable");
+    return 1;
+  }
+  int mismatches = 0, compared = 0;
+  const auto compare = [&](const char* key, bool bid) {
+    int i = 0;
+    auto mine_bid = bids.begin();
+    auto mine_ask = asks.begin();
+    for (auto lv : simdjson::dom::array(vdoc[key])) {
+      if (i++ >= *depth) break;
+      auto it = simdjson::dom::array(lv).begin();
+      const std::int64_t vpx = to_cents((*it).get_string().value());
+      ++it;
+      const double vqty = std::strtod(
+          std::string((*it).get_string().value()).c_str(), nullptr);
+      std::int64_t mpx = 0;
+      double mqty = 0.0;
+      if (bid) {
+        if (mine_bid == bids.end()) { ++mismatches; continue; }
+        mpx = mine_bid->first;
+        mqty = std::strtod(mine_bid->second.c_str(), nullptr);
+        ++mine_bid;
+      } else {
+        if (mine_ask == asks.end()) { ++mismatches; continue; }
+        mpx = mine_ask->first;
+        mqty = std::strtod(mine_ask->second.c_str(), nullptr);
+        ++mine_ask;
+      }
+      ++compared;
+      if (mpx != vpx || std::fabs(mqty - vqty) > 1e-9) ++mismatches;
+    }
+  };
+  compare("bids", true);
+  compare("asks", false);
+  std::printf("BOOK_VERIFY levels_compared=%d mismatches=%d %s\n",
+              compared, mismatches, mismatches == 0 ? "exact" : "DIVERGED");
+  return mismatches == 0 ? 0 : 1;
+}
+
 int run_replay(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
   const std::string in_path(args[0]);
@@ -1392,6 +1542,7 @@ int main(int argc, char** argv) {
   if (command == "lob-bench") return run_lob_bench_cmd(rest);
   if (command == "fanout-bench") return run_fanout_bench_cmd(rest);
   if (command == "ingest-bench") return run_ingest_bench_cmd(rest);
+  if (command == "book-verify") return run_book_verify_cmd(rest);
   if (command == "synth") return run_synth(rest);
   if (command == "replay") return run_replay(rest);
 #ifdef BASIS_HAS_NET
