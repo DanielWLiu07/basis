@@ -242,6 +242,12 @@ every figure traces to one command. Recorded so far:
   the current image under the same lock the publisher fans out beneath, so
   it can neither miss an update nor receive one older than a value already
   waiting for it.
+- Entitlements are enforced on that same session, default-deny in
+  `Restricted` mode, and the interesting half is revocation: an
+  entitlement that lapses mid-session must drop the value already waiting
+  in the subscriber's slot AND withhold one published in the race after
+  the revoke, so the check runs both at `revoke()` and again at delivery
+  (`docs/bench/fanout.md`).
 - `docs/bench/matching_engine.md`: the price-time-priority book sustains
   28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook std::map
   book replaying identical order flow, with per-class tail latency

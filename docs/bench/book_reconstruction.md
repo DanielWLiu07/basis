@@ -53,8 +53,13 @@ contained in it, 230 applied in unbroken sequence, and the resulting book
 matches the venue's independently produced snapshot on all twenty levels
 of both sides, at the same sequence id. Not "looks right": identical.
 
-The comparison is only meaningful because the run reaches the validation
-snapshot's `lastUpdateId` exactly (`reached_target=1`). An earlier version
+The comparison is only meaningful because the run stops exactly on the
+validation snapshot's sequence point, which the output now states rather
+than implies: `final_u=98375149976 target=98375149976 overshoot=0`. Depth
+events are atomic, so a snapshot taken strictly inside an event's id
+range would leave the book a few ids past it, and a clean result at
+`overshoot > 0` is weaker evidence than one at `overshoot == 0`. Reporting
+the number is what lets a reader tell the two apart. An earlier version
 of this experiment stopped eleven updates short and still matched, which
 would have been luck rather than evidence; the capture was redone so the
 stream runs past the validation point.

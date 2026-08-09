@@ -302,3 +302,220 @@ TEST(ConflatingSession, JoiningDuringAPublishStormNeverMissesTheFinalValue) {
         << "joiner " << j << " did not end on the final value";
   }
 }
+
+using E = ConflatingSession::Entitlements;
+
+TEST(ConflatingSession, RestrictedModeDeniesUngrantedTopics) {
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  // Default-deny: no grant, so the subscription never takes effect and
+  // the publish has nowhere to land.
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.publish(tick("fed", "mid", 50.0));
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+  EXPECT_EQ(s.stats().subscriptions_denied, 1u);
+}
+
+TEST(ConflatingSession, GrantedTopicsFlowNormally) {
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  double seen = 0.0;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [&](const Update& u) { seen = u.value; });
+  s.publish(tick("fed", "mid", 50.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_DOUBLE_EQ(seen, 50.0);
+  EXPECT_EQ(s.stats().subscriptions_denied, 0u);
+}
+
+TEST(ConflatingSession, EntitlementIsPerSubscriberAndPerTopic) {
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto a = s.add_subscriber();
+  const auto b = s.add_subscriber();
+  int a_mid = 0, a_basis = 0, b_mid = 0;
+  s.grant(a, "fed", "mid");          // a sees mid but not basis
+  s.grant(b, "fed", "basis");        // b sees basis but not mid
+  s.subscribe_for(a, "fed", "mid", [&](const Update&) { ++a_mid; });
+  s.subscribe_for(a, "fed", "basis", [&](const Update&) { ++a_basis; });
+  s.subscribe_for(b, "fed", "mid", [&](const Update&) { ++b_mid; });
+
+  s.publish(tick("fed", "mid", 1.0));
+  s.publish(tick("fed", "basis", 2.0));
+  s.drain(a);
+  s.drain(b);
+  EXPECT_EQ(a_mid, 1);
+  EXPECT_EQ(a_basis, 0);  // licensed for mid only
+  EXPECT_EQ(b_mid, 0);    // licensed for basis only
+}
+
+TEST(ConflatingSession, RevocationDropsAValueAlreadyWaitingInTheSlot) {
+  // The case that makes revocation more than a flag: the value was
+  // published while the subscriber was still entitled and is already
+  // sitting in its slot. Revoking must reach in and drop it, because
+  // delivering it afterwards is delivering data the subscriber is no
+  // longer licensed to see.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.publish(tick("fed", "mid", 50.0));   // slotted, not yet drained
+
+  s.revoke(sub, "fed", "mid");
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+  EXPECT_EQ(s.stats().revocations, 1u);
+  EXPECT_GT(s.stats().withheld, 0u);
+}
+
+TEST(ConflatingSession, APublishAfterRevocationCannotSlipThrough) {
+  // The other half of the window: a publish that lands after the revoke
+  // must not be delivered either, even though the roster still lists the
+  // subscriber for that topic. Delivery re-checks, so it is withheld.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.revoke(sub, "fed", "mid");
+
+  s.publish(tick("fed", "mid", 99.0));
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+
+  // And a re-grant restores delivery without needing a resubscribe.
+  s.grant(sub, "fed", "mid");
+  s.publish(tick("fed", "mid", 101.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_EQ(calls, 1);
+}
+
+TEST(ConflatingSession, OpenModeIgnoresEntitlementsEntirely) {
+  // The replay path never grants anything; it must keep working.
+  ConflatingSession s;  // Open by default
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.publish(tick("fed", "mid", 7.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(s.stats().subscriptions_denied, 0u);
+  EXPECT_EQ(s.stats().withheld, 0u);
+}
+
+TEST(ConflatingSession, GrantAfterSubscribeActivatesTheSubscription) {
+  // The ordering trap: a subscription made before its grant used to be
+  // dropped outright, so the later grant did nothing and the subscriber
+  // silently received nothing forever.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  double seen = 0.0;
+  s.subscribe_for(sub, "fed", "mid", [&](const Update& u) { seen = u.value; });
+  s.publish(tick("fed", "mid", 1.0));
+  EXPECT_EQ(s.drain(sub), 0u);           // dormant, correctly delivering nothing
+  EXPECT_EQ(s.stats().subscriptions_denied, 1u);
+
+  s.grant(sub, "fed", "mid");            // no resubscribe
+  s.publish(tick("fed", "mid", 2.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_DOUBLE_EQ(seen, 2.0);
+}
+
+TEST(ConflatingSession, UnentitledDataIsNeverStoredNotMerelyUndelivered) {
+  // Withholding delivery is not enough for a licensing control: if the
+  // publish still writes the value into the revoked subscriber's slot, it
+  // is holding licensed data it may not see until re-grant or teardown.
+  // Re-granting must therefore NOT surface anything published while the
+  // entitlement was gone.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  std::vector<double> seen;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid",
+                  [&](const Update& u) { seen.push_back(u.value); });
+  s.revoke(sub, "fed", "mid");
+
+  s.publish(tick("fed", "mid", 99.0));   // must not be retained anywhere
+  EXPECT_EQ(s.drain(sub), 0u);
+
+  s.grant(sub, "fed", "mid");
+  // Nothing to deliver: the 99.0 was never stored, so re-granting cannot
+  // leak it. Only a value published after the re-grant arrives.
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_TRUE(seen.empty());
+  s.publish(tick("fed", "mid", 100.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  ASSERT_EQ(seen.size(), 1u);
+  EXPECT_DOUBLE_EQ(seen[0], 100.0);
+}
+
+TEST(ConflatingSession, RevokingAfterDeliveryReportsNoWithholding) {
+  // A value already delivered still sits in `latest` as the conflation
+  // slot. Counting its removal as a withholding would report a
+  // withholding that never happened, in a number offered as evidence.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [](const Update&) {});
+  s.publish(tick("fed", "mid", 5.0));
+  ASSERT_EQ(s.drain(sub), 1u);           // delivered legitimately
+
+  s.revoke(sub, "fed", "mid");
+  EXPECT_EQ(s.stats().withheld, 0u);     // nothing was actually withheld
+  EXPECT_EQ(s.stats().revocations, 1u);
+}
+
+TEST(ConflatingSession, EntitlementCountersAreExactUnderConcurrentDrains) {
+  // The counters are mutated from drain(), which holds only a
+  // subscriber's own lock. A single shared counter would be a data race
+  // across concurrent drainers with no lock in common, and would lose
+  // increments silently. Restricted mode is what reaches that path, so
+  // this is the multithreaded test that exercises it.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  constexpr int kSubs = 8;
+  constexpr int kUpdates = 2'000;
+  std::vector<ConflatingSession::SubscriberId> ids;
+  for (int i = 0; i < kSubs; ++i) {
+    const auto id = s.add_subscriber();
+    ids.push_back(id);
+    // Half entitled, half not: the unentitled half drives the withheld
+    // path on every publish.
+    if (i % 2 == 0) s.grant(id, "fed", "mid");
+    s.subscribe_for(id, "fed", "mid", [](const Update&) {});
+  }
+
+  std::atomic<bool> running{true};
+  std::vector<std::thread> drainers;
+  for (int i = 0; i < kSubs; ++i) {
+    drainers.emplace_back([&, i] {
+      while (running) s.drain(ids[i]);
+      s.drain(ids[i]);
+    });
+  }
+  for (int u = 0; u < kUpdates; ++u) {
+    s.publish(tick("fed", "mid", static_cast<double>(u)));
+  }
+  running = false;
+  for (auto& t : drainers) t.join();
+
+  const auto st = s.stats();
+  EXPECT_EQ(st.published, static_cast<std::uint64_t>(kUpdates));
+  // Four unentitled subscribers, one skipped slot each per publish, and
+  // nothing stored for them: exact, not approximate.
+  EXPECT_EQ(st.withheld, static_cast<std::uint64_t>(kUpdates) * 4);
+  // Only entitled subscribers were ever queued, and every queued value is
+  // accounted for as delivered or conflated.
+  EXPECT_EQ(st.queued, static_cast<std::uint64_t>(kUpdates) * 4);
+  EXPECT_EQ(st.queued, st.delivered + st.conflated);
+}

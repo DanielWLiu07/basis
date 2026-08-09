@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "api/subscription.h"
@@ -50,7 +52,45 @@ class ConflatingSession final : public Session {
     std::uint64_t queued = 0;      // (update, subscriber) pairs slotted
     std::uint64_t delivered = 0;   // handler invocations
     std::uint64_t conflated = 0;   // values overwritten before delivery
+    // Entitlement accounting. Denials and withheld values are counted
+    // rather than merely prevented, because "nobody was denied anything"
+    // is a claim an audit will ask you to evidence.
+    std::uint64_t subscriptions_denied = 0;
+    std::uint64_t withheld = 0;     // values not delivered, not entitled
+    std::uint64_t revocations = 0;
   };
+
+  // Market data is licensed, and who may see which topic is enforced
+  // rather than assumed. Two modes, because a session that has never
+  // heard of entitlements should not silently behave as if everything is
+  // permitted OR as if nothing is:
+  //
+  //   Open        no entitlement concept; every subscriber may see every
+  //               topic. What the in-process replay path wants.
+  //   Restricted  default-deny. A subscriber sees a topic only if it has
+  //               been granted, which is the posture a real deployment
+  //               runs in, because fail-open on a licensing control is
+  //               the failure that ends up in front of a regulator.
+  enum class Entitlements : std::uint8_t { Open, Restricted };
+
+  void set_entitlements(Entitlements mode);
+
+  // Grant or revoke one (subscriber, topic) pair. Order-independent with
+  // respect to subscribe_for: a subscription made before its grant lies
+  // dormant and starts delivering when the grant lands, rather than
+  // silently never working. (A production API would answer a subscribe
+  // with a status instead; this one returns void, so the failure has to
+  // be recoverable rather than fatal.)
+  //
+  // Revocation takes effect immediately, in three places, because
+  // "undelivered" is not the same as "not held": it purges what is
+  // already slotted, publish() stops storing anything further, and
+  // delivery re-checks so a publish racing the revoke cannot slip through
+  // behind it.
+  void grant(SubscriberId id, const std::string& event_id,
+             const std::string& field);
+  void revoke(SubscriberId id, const std::string& event_id,
+              const std::string& field);
 
   ConflatingSession() = default;
 
@@ -112,14 +152,26 @@ class ConflatingSession final : public Session {
     std::unordered_map<TopicId, Update> latest;
     std::vector<TopicId> pending;
     std::unordered_map<TopicId, std::vector<Handler>> handlers;
+    // Topics this subscriber is licensed to see. Only consulted in
+    // Restricted mode; empty means "nothing" there, and means nothing at
+    // all in Open mode.
+    std::unordered_set<TopicId> entitled;
     std::uint64_t delivered = 0;
     std::uint64_t conflated = 0;
+    // Per-subscriber, summed in stats() like the two above. A single
+    // shared counter would be written from drain() under the
+    // subscriber's own lock and from revoke() under the registry lock,
+    // which is two threads mutating one object with no lock in common.
+    std::uint64_t withheld = 0;
   };
 
   // Slots `update` for `sub`, marking the topic pending and counting a
   // conflation when it supersedes a value nobody has read. Caller holds
-  // registry_mutex_; this takes the subscriber's lock.
-  static void slot_locked(Subscriber& sub, TopicId topic, const Update& update);
+  // registry_mutex_; this takes the subscriber's lock. Returns false when
+  // the subscriber is not entitled to the topic, in which case nothing is
+  // stored: an unentitled subscriber must not merely be undelivered, it
+  // must not be holding the data at all.
+  bool slot_locked(Subscriber& sub, TopicId topic, const Update& update);
 
   mutable std::mutex registry_mutex_;  // guards topic map, roster, cache
   std::unordered_map<std::string, TopicId> topic_ids_;
@@ -132,8 +184,19 @@ class ConflatingSession final : public Session {
   // to grow without moving live subscribers.
   std::vector<std::unique_ptr<Subscriber>> subscribers_;
   bool stopped_ = false;
+  // Atomic because drain() reads it holding only the subscriber's own
+  // lock, so a set_entitlements() concurrent with a delivery would
+  // otherwise be a race on a plain enum. (publish() does hold
+  // registry_mutex_ across its fan-out, so this is a correctness
+  // requirement rather than a contention one.)
+  std::atomic<Entitlements> entitlements_{Entitlements::Open};
   std::uint64_t published_ = 0;
   std::uint64_t queued_ = 0;
+  std::uint64_t denied_ = 0;
+  std::uint64_t revocations_ = 0;
+
+  // Caller holds `sub`'s own mutex. Open mode permits everything.
+  bool permitted_locked(const Subscriber& sub, TopicId topic) const;
 };
 
 }  // namespace basis::api

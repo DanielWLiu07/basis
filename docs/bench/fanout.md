@@ -92,6 +92,52 @@ A test pins the race directly: 16 subscribers join while a publisher runs
 20,000 updates flat out, and every one of them must end holding the final
 value whichever side of the fan-out its join landed on.
 
+## Entitlements, and why revocation is the hard half
+
+Market data is licensed, so who may see which topic is a control the
+distributor has to enforce, and be able to evidence enforcing. The
+session has two modes. `Open` has no entitlement concept and is what the
+in-process replay path uses. `Restricted` is default-deny: a subscriber
+sees a topic only once it has been granted, which is the posture a real
+deployment runs in, because failing open on a licensing control is the
+failure that ends up in front of a regulator.
+
+Checking at subscribe time is the easy half and is not sufficient. An
+entitlement can lapse mid-session, and when it does there is already a
+value sitting in the subscriber's slot, published while it was still
+licensed. Two windows have to close:
+
+- `revoke()` reaches into the subscriber's slot and drops what is waiting
+  there, so an entitlement that ends stops delivery immediately rather
+  than at the next resubscribe.
+- `publish()` stores nothing for an unentitled subscriber at all. Purging
+  on revoke is pointless on its own, because the next publish would write
+  the licensed value straight back into the slot, where it would sit
+  until re-grant or teardown. For a licensing control, "not delivered"
+  and "not held" are different claims and an audit asks about the second.
+- `drain()` re-checks at the moment of delivery, which is the only place
+  that can stop a publish racing the revoke: the roster still lists the
+  subscriber, the value was slotted legitimately, and the check on the
+  delivery side is what withholds it.
+
+Granting and subscribing are order-independent: a subscription made
+before its grant lies dormant and begins delivering when the grant lands.
+An earlier version dropped such a subscription outright, which made a
+later grant a silent no-op forever - the kind of failure that has no
+symptom until someone asks why a desk sees nothing.
+
+The counters are per-subscriber and summed on read, not one shared total.
+A shared counter would be incremented from `drain()` under a subscriber's
+own lock and from `revoke()` under the registry lock, which is two
+threads mutating one object with no lock in common: a data race that
+loses increments silently, in the number offered as audit evidence.
+
+The check reads the subscriber's own entitled set under the subscriber's
+own lock, and the mode is atomic, so enforcement adds nothing to the lock
+publishers fan out under. Denials, withheld values and revocations are
+counted rather than merely prevented, because "nobody received anything
+they should not have" is a claim an audit asks you to evidence.
+
 ## Correctness under conflation
 
 Every run reports `worst_staleness_updates`, the largest gap between the
