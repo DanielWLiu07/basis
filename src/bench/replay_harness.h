@@ -119,6 +119,22 @@ struct ReplayStats {
     // queue-imbalance bias.
     double micro_basis_mean = 0.0;
     std::uint64_t micro_basis_samples = 0;
+    // Complementary (YES/NO) no-arbitrage, which only exists because these
+    // contracts settle at $0 or $1: YES and NO on one market are exhaustive
+    // and mutually exclusive, so a buyer of both pays $1 and receives
+    // exactly $1. Selling one of each therefore collects YES_bid + NO_bid
+    // against a certain $1 liability, and any excess over $1.00 is riskless.
+    //
+    // The normalizer folds NO into the YES frame (a NO bid at p is a YES
+    // ask at 100 - p), so this condition is exactly "the folded book is
+    // internally crossed": best bid above best ask on one venue. No basket
+    // completeness caveat applies here, unlike the multi-outcome baskets:
+    // two complementary contracts are the whole outcome space by
+    // construction.
+    std::uint64_t internal_cross_updates = 0;   // folded book crossed
+    std::uint64_t internal_two_sided_updates = 0;
+    double internal_cross_max_cents = 0.0;      // best bid minus best ask
+    double internal_cross_mean_cents = 0.0;
     // Updates where both venues were two-sided, and how many of those were a
     // crossable cross-venue dislocation (best bid on one > best ask on the
     // other): an actual, fees-aside arbitrage between the books.
@@ -291,6 +307,14 @@ class ReplayHarness {
  private:
   void observe_basket(const std::string& event_id,
                       const model::BookDelta& delta);
+  // Evaluates the complementary no-arbitrage bound for every event this
+  // message touched. Deliberately called once per WIRE MESSAGE rather
+  // than per delta: one Polymarket price_change carries several level
+  // changes, and between "add the new best bid" and "remove the old best
+  // ask" the folded book is transiently crossed. Sampling per delta
+  // reports those transients as arbitrage that no one could ever have
+  // traded, because the state never existed between messages.
+  void observe_complementary_at_message_end();
   void on_event_update(const std::string& event_id,
                        const model::UnifiedBook& book,
                        const model::BookDelta& delta);
@@ -316,6 +340,8 @@ class ReplayHarness {
     analytics::DivergenceTracker kalshi_micro_gap;
     analytics::DivergenceTracker poly_micro_gap;
     analytics::DivergenceTracker micro_basis;
+    analytics::DivergenceTracker internal_cross;
+    std::uint64_t internal_two_sided = 0;
     std::uint64_t two_sided_updates = 0;
     std::uint64_t crossable_updates = 0;
     // Crossed-run state: a run opens on the first crossed update after an
@@ -363,6 +389,8 @@ class ReplayHarness {
     std::uint64_t max_two_sided[2] = {0, 0};
   };
   std::vector<BasketState> baskets_;
+  // Events touched by the message currently being applied.
+  std::vector<std::string> dirty_events_;
   std::unordered_map<std::string, std::size_t> event_to_basket_;
   LatencyRecorder latency_;
   ReplayStats stats_;

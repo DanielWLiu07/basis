@@ -370,6 +370,10 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 "\"poly_micro_minus_mid_mean\": %.4f, "
                 "\"micro_basis_mean\": %.4f, "
                 "\"micro_basis_samples\": %llu, "
+                "\"internal_cross_updates\": %llu, "
+                "\"internal_two_sided_updates\": %llu, "
+                "\"internal_cross_mean_cents\": %.4f, "
+                "\"internal_cross_max_cents\": %.4f, "
                 "\"survival_open_mean_dollars\": %.4f, "
                 "\"survival_50ms_mean_dollars\": %.4f, "
                 "\"survival_50ms_episodes\": %llu, "
@@ -406,6 +410,8 @@ void print_stats_json(const basis::bench::ReplayStats& stats,
                 e.kalshi_imbalance_mean, e.poly_imbalance_mean,
                 e.kalshi_micro_minus_mid_mean, e.poly_micro_minus_mid_mean,
                 e.micro_basis_mean, u(e.micro_basis_samples),
+                u(e.internal_cross_updates), u(e.internal_two_sided_updates),
+                e.internal_cross_mean_cents, e.internal_cross_max_cents,
                 e.episode_net_sweep_after_mean_dollars[0],
                 e.episode_net_sweep_after_mean_dollars[1],
                 u(e.episodes_alive_after[1]),
@@ -593,6 +599,16 @@ void print_stats(const basis::bench::ReplayStats& stats) {
                     u(
                         event.crossable_sweepable_updates),
                     u(event.crossable_updates));
+        // Complementary YES/NO no-arbitrage: riskless if it ever holds,
+        // and the size of it decides whether it is tradeable or noise.
+        if (event.internal_cross_updates > 0) {
+          std::printf("           complementary arb: %llu/%llu updates had "
+                      "YES_bid + NO_bid > $1.00, by %.1fc mean / %.0fc max\n",
+                      u(event.internal_cross_updates),
+                      u(event.internal_two_sided_updates),
+                      event.internal_cross_mean_cents,
+                      event.internal_cross_max_cents);
+        }
         // Size-weighted view: where the microprice sits relative to the
         // mid the basis is built on, and how lopsided each queue is.
         if (event.micro_basis_samples > 0) {
