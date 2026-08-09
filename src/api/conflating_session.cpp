@@ -21,9 +21,16 @@ ConflatingSession::SubscriberId ConflatingSession::add_subscriber() {
   return subscribers_.size() - 1;
 }
 
-void ConflatingSession::slot_locked(Subscriber& sub, TopicId topic,
+bool ConflatingSession::slot_locked(Subscriber& sub, TopicId topic,
                                     const Update& update) {
   const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+  // Not entitled: store nothing. Purging on revoke is pointless if the
+  // next publish writes the licensed value straight back into the slot,
+  // where it would sit until re-grant or teardown.
+  if (!permitted_locked(sub, topic)) {
+    ++sub.withheld;
+    return false;
+  }
   const auto [slot, inserted] = sub.latest.insert_or_assign(topic, update);
   (void)slot;
   bool pending = false;
@@ -37,6 +44,7 @@ void ConflatingSession::slot_locked(Subscriber& sub, TopicId topic,
   } else {
     sub.pending.push_back(topic);
   }
+  return true;
 }
 
 bool ConflatingSession::permitted_locked(const Subscriber& sub,
@@ -74,10 +82,18 @@ void ConflatingSession::revoke(SubscriberId id, const std::string& event_id,
   // waiting in this subscriber's slot for that topic is dropped here, and
   // drain() re-checks entitlement so a publish racing this revoke cannot
   // land a value behind it.
-  if (sub.latest.erase(topic) > 0) ++withheld_;
-  sub.pending.erase(
-      std::remove(sub.pending.begin(), sub.pending.end(), topic),
-      sub.pending.end());
+  // Count a withholding only for a value nobody had read yet. A value
+  // already delivered is still sitting in `latest` as the conflation
+  // slot, and counting that would report a withholding that never
+  // happened - the wrong direction for a number offered as audit
+  // evidence.
+  const auto was_pending =
+      std::find(sub.pending.begin(), sub.pending.end(), topic);
+  if (was_pending != sub.pending.end()) {
+    ++sub.withheld;
+    sub.pending.erase(was_pending);
+  }
+  sub.latest.erase(topic);
 }
 
 void ConflatingSession::subscribe_for(SubscriberId id,
@@ -105,10 +121,11 @@ void ConflatingSession::subscribe_for(SubscriberId id,
   Subscriber& sub = *subscribers_[id];
   {
     const std::lock_guard<std::mutex> sub_lock(sub.mutex);
-    if (!permitted_locked(sub, topic)) {
-      ++denied_;
-      return;  // not licensed for this topic: no handler, no roster entry
-    }
+    if (!permitted_locked(sub, topic)) ++denied_;
+    // Registered either way. Delivery is gated by entitlement in three
+    // places, so a dormant subscription costs nothing and a later grant
+    // activates it; refusing to register here instead made grant() a
+    // silent no-op whenever it followed subscribe_for.
     sub.handlers[topic].push_back(std::move(handler));
   }
   if (!listed) roster.push_back(id);
@@ -145,8 +162,12 @@ void ConflatingSession::publish(const Update& update) {
     for (SubscriberId id : topic_subscribers_[topic]) {
       targets.push_back(subscribers_[id].get());
     }
-    queued_ += targets.size();
-    for (Subscriber* sub : targets) slot_locked(*sub, topic, update);
+    // Count what was actually stored: an unentitled subscriber is skipped
+    // inside slot_locked, so queued stays the number of values a
+    // subscriber genuinely holds.
+    for (Subscriber* sub : targets) {
+      if (slot_locked(*sub, topic, update)) ++queued_;
+    }
   }
 }
 
@@ -176,7 +197,7 @@ std::size_t ConflatingSession::drain(SubscriberId id) {
       const auto handlers = sub->handlers.find(topic);
       if (value == sub->latest.end() || handlers == sub->handlers.end()) continue;
       if (!permitted_locked(*sub, topic)) {
-        ++withheld_;
+        ++sub->withheld;  // revoked between the publish and this drain
         continue;
       }
       work.emplace_back(value->second, handlers->second);
@@ -201,12 +222,12 @@ ConflatingSession::Stats ConflatingSession::stats() const {
   s.published = published_;
   s.queued = queued_;
   s.subscriptions_denied = denied_;
-  s.withheld = withheld_;
   s.revocations = revocations_;
   for (const auto& sub : subscribers_) {
     const std::lock_guard<std::mutex> sub_lock(sub->mutex);
     s.delivered += sub->delivered;
     s.conflated += sub->conflated;
+    s.withheld += sub->withheld;
   }
   return s;
 }

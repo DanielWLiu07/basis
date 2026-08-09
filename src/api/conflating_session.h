@@ -75,10 +75,18 @@ class ConflatingSession final : public Session {
 
   void set_entitlements(Entitlements mode);
 
-  // Grant or revoke one (subscriber, topic) pair. Revocation takes effect
-  // immediately: it purges anything already slotted for that subscriber
-  // on that topic, and delivery re-checks entitlement so a publish racing
-  // the revoke cannot slip a value through behind it.
+  // Grant or revoke one (subscriber, topic) pair. Order-independent with
+  // respect to subscribe_for: a subscription made before its grant lies
+  // dormant and starts delivering when the grant lands, rather than
+  // silently never working. (A production API would answer a subscribe
+  // with a status instead; this one returns void, so the failure has to
+  // be recoverable rather than fatal.)
+  //
+  // Revocation takes effect immediately, in three places, because
+  // "undelivered" is not the same as "not held": it purges what is
+  // already slotted, publish() stops storing anything further, and
+  // delivery re-checks so a publish racing the revoke cannot slip through
+  // behind it.
   void grant(SubscriberId id, const std::string& event_id,
              const std::string& field);
   void revoke(SubscriberId id, const std::string& event_id,
@@ -150,12 +158,20 @@ class ConflatingSession final : public Session {
     std::unordered_set<TopicId> entitled;
     std::uint64_t delivered = 0;
     std::uint64_t conflated = 0;
+    // Per-subscriber, summed in stats() like the two above. A single
+    // shared counter would be written from drain() under the
+    // subscriber's own lock and from revoke() under the registry lock,
+    // which is two threads mutating one object with no lock in common.
+    std::uint64_t withheld = 0;
   };
 
   // Slots `update` for `sub`, marking the topic pending and counting a
   // conflation when it supersedes a value nobody has read. Caller holds
-  // registry_mutex_; this takes the subscriber's lock.
-  static void slot_locked(Subscriber& sub, TopicId topic, const Update& update);
+  // registry_mutex_; this takes the subscriber's lock. Returns false when
+  // the subscriber is not entitled to the topic, in which case nothing is
+  // stored: an unentitled subscriber must not merely be undelivered, it
+  // must not be holding the data at all.
+  bool slot_locked(Subscriber& sub, TopicId topic, const Update& update);
 
   mutable std::mutex registry_mutex_;  // guards topic map, roster, cache
   std::unordered_map<std::string, TopicId> topic_ids_;
@@ -168,15 +184,15 @@ class ConflatingSession final : public Session {
   // to grow without moving live subscribers.
   std::vector<std::unique_ptr<Subscriber>> subscribers_;
   bool stopped_ = false;
-  // Atomic so drain() can consult it under the subscriber's own lock
-  // alone. Routing entitlement checks through registry_mutex_ would put
-  // every delivery behind the same lock publishers fan out under, which
-  // is the contention this design exists to avoid.
+  // Atomic because drain() reads it holding only the subscriber's own
+  // lock, so a set_entitlements() concurrent with a delivery would
+  // otherwise be a race on a plain enum. (publish() does hold
+  // registry_mutex_ across its fan-out, so this is a correctness
+  // requirement rather than a contention one.)
   std::atomic<Entitlements> entitlements_{Entitlements::Open};
   std::uint64_t published_ = 0;
   std::uint64_t queued_ = 0;
   std::uint64_t denied_ = 0;
-  std::uint64_t withheld_ = 0;
   std::uint64_t revocations_ = 0;
 
   // Caller holds `sub`'s own mutex. Open mode permits everything.
