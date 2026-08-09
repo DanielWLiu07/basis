@@ -92,6 +92,35 @@ A test pins the race directly: 16 subscribers join while a publisher runs
 20,000 updates flat out, and every one of them must end holding the final
 value whichever side of the fan-out its join landed on.
 
+## Entitlements, and why revocation is the hard half
+
+Market data is licensed, so who may see which topic is a control the
+distributor has to enforce, and be able to evidence enforcing. The
+session has two modes. `Open` has no entitlement concept and is what the
+in-process replay path uses. `Restricted` is default-deny: a subscriber
+sees a topic only once it has been granted, which is the posture a real
+deployment runs in, because failing open on a licensing control is the
+failure that ends up in front of a regulator.
+
+Checking at subscribe time is the easy half and is not sufficient. An
+entitlement can lapse mid-session, and when it does there is already a
+value sitting in the subscriber's slot, published while it was still
+licensed. Two windows have to close:
+
+- `revoke()` reaches into the subscriber's slot and drops what is waiting
+  there, so an entitlement that ends stops delivery immediately rather
+  than at the next resubscribe.
+- `drain()` re-checks entitlement at the moment of delivery, which is the
+  only place that can stop a publish racing the revoke: the roster still
+  lists the subscriber, the value is slotted legitimately, and the check
+  on the delivery side is what withholds it.
+
+The check reads the subscriber's own entitled set under the subscriber's
+own lock, and the mode is atomic, so enforcement adds nothing to the lock
+publishers fan out under. Denials, withheld values and revocations are
+counted rather than merely prevented, because "nobody received anything
+they should not have" is a claim an audit asks you to evidence.
+
 ## Correctness under conflation
 
 Every run reports `worst_staleness_updates`, the largest gap between the

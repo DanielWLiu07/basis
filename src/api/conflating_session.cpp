@@ -38,6 +38,47 @@ void ConflatingSession::slot_locked(Subscriber& sub, TopicId topic,
   }
 }
 
+bool ConflatingSession::permitted_locked(const Subscriber& sub,
+                                         TopicId topic) const {
+  if (entitlements_.load(std::memory_order_relaxed) == Entitlements::Open) {
+    return true;
+  }
+  return sub.entitled.find(topic) != sub.entitled.end();
+}
+
+void ConflatingSession::set_entitlements(Entitlements mode) {
+  entitlements_.store(mode, std::memory_order_relaxed);
+}
+
+void ConflatingSession::grant(SubscriberId id, const std::string& event_id,
+                              const std::string& field) {
+  const std::lock_guard<std::mutex> lock(registry_mutex_);
+  if (id >= subscribers_.size()) return;
+  const TopicId topic = intern_topic(topic_key(event_id, field));
+  Subscriber& sub = *subscribers_[id];
+  const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+  sub.entitled.insert(topic);
+}
+
+void ConflatingSession::revoke(SubscriberId id, const std::string& event_id,
+                               const std::string& field) {
+  const std::lock_guard<std::mutex> lock(registry_mutex_);
+  if (id >= subscribers_.size()) return;
+  const TopicId topic = intern_topic(topic_key(event_id, field));
+  Subscriber& sub = *subscribers_[id];
+  const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+  sub.entitled.erase(topic);
+  ++revocations_;
+  // Immediate effect, not effective-on-next-subscribe: anything already
+  // waiting in this subscriber's slot for that topic is dropped here, and
+  // drain() re-checks entitlement so a publish racing this revoke cannot
+  // land a value behind it.
+  if (sub.latest.erase(topic) > 0) ++withheld_;
+  sub.pending.erase(
+      std::remove(sub.pending.begin(), sub.pending.end(), topic),
+      sub.pending.end());
+}
+
 void ConflatingSession::subscribe_for(SubscriberId id,
                                       const std::string& event_id,
                                       const std::string& field,
@@ -60,12 +101,16 @@ void ConflatingSession::subscribe_for(SubscriberId id,
   for (SubscriberId existing : roster) {
     if (existing == id) { listed = true; break; }
   }
-  if (!listed) roster.push_back(id);
   Subscriber& sub = *subscribers_[id];
   {
     const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+    if (!permitted_locked(sub, topic)) {
+      ++denied_;
+      return;  // not licensed for this topic: no handler, no roster entry
+    }
     sub.handlers[topic].push_back(std::move(handler));
   }
+  if (!listed) roster.push_back(id);
   // Snapshot: hand the joiner the current image so it is useful before
   // the next tick, which on a quiet market may be minutes away.
   const auto cached = last_value_.find(topic);
@@ -117,12 +162,22 @@ std::size_t ConflatingSession::drain(SubscriberId id) {
   // else's publish path.
   std::vector<std::pair<Update, std::vector<Handler>>> work;
   {
+    // Entitlement is re-checked here, at the moment of delivery, not only
+    // at subscribe. A revoke that lands between a publish slotting a value
+    // and this drain reading it must still stop the value, and only a
+    // check on this side of that window can. It reads the subscriber's own
+    // entitled set under the subscriber's own lock, so delivery never
+    // touches the lock publishers fan out under.
     const std::lock_guard<std::mutex> lock(sub->mutex);
     work.reserve(sub->pending.size());
     for (TopicId topic : sub->pending) {
       const auto value = sub->latest.find(topic);
       const auto handlers = sub->handlers.find(topic);
       if (value == sub->latest.end() || handlers == sub->handlers.end()) continue;
+      if (!permitted_locked(*sub, topic)) {
+        ++withheld_;
+        continue;
+      }
       work.emplace_back(value->second, handlers->second);
     }
     sub->pending.clear();
@@ -144,6 +199,9 @@ ConflatingSession::Stats ConflatingSession::stats() const {
   Stats s;
   s.published = published_;
   s.queued = queued_;
+  s.subscriptions_denied = denied_;
+  s.withheld = withheld_;
+  s.revocations = revocations_;
   for (const auto& sub : subscribers_) {
     const std::lock_guard<std::mutex> sub_lock(sub->mutex);
     s.delivered += sub->delivered;

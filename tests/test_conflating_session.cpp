@@ -302,3 +302,110 @@ TEST(ConflatingSession, JoiningDuringAPublishStormNeverMissesTheFinalValue) {
         << "joiner " << j << " did not end on the final value";
   }
 }
+
+using E = ConflatingSession::Entitlements;
+
+TEST(ConflatingSession, RestrictedModeDeniesUngrantedTopics) {
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  // Default-deny: no grant, so the subscription never takes effect and
+  // the publish has nowhere to land.
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.publish(tick("fed", "mid", 50.0));
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+  EXPECT_EQ(s.stats().subscriptions_denied, 1u);
+}
+
+TEST(ConflatingSession, GrantedTopicsFlowNormally) {
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  double seen = 0.0;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [&](const Update& u) { seen = u.value; });
+  s.publish(tick("fed", "mid", 50.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_DOUBLE_EQ(seen, 50.0);
+  EXPECT_EQ(s.stats().subscriptions_denied, 0u);
+}
+
+TEST(ConflatingSession, EntitlementIsPerSubscriberAndPerTopic) {
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto a = s.add_subscriber();
+  const auto b = s.add_subscriber();
+  int a_mid = 0, a_basis = 0, b_mid = 0;
+  s.grant(a, "fed", "mid");          // a sees mid but not basis
+  s.grant(b, "fed", "basis");        // b sees basis but not mid
+  s.subscribe_for(a, "fed", "mid", [&](const Update&) { ++a_mid; });
+  s.subscribe_for(a, "fed", "basis", [&](const Update&) { ++a_basis; });
+  s.subscribe_for(b, "fed", "mid", [&](const Update&) { ++b_mid; });
+
+  s.publish(tick("fed", "mid", 1.0));
+  s.publish(tick("fed", "basis", 2.0));
+  s.drain(a);
+  s.drain(b);
+  EXPECT_EQ(a_mid, 1);
+  EXPECT_EQ(a_basis, 0);  // licensed for mid only
+  EXPECT_EQ(b_mid, 0);    // licensed for basis only
+}
+
+TEST(ConflatingSession, RevocationDropsAValueAlreadyWaitingInTheSlot) {
+  // The case that makes revocation more than a flag: the value was
+  // published while the subscriber was still entitled and is already
+  // sitting in its slot. Revoking must reach in and drop it, because
+  // delivering it afterwards is delivering data the subscriber is no
+  // longer licensed to see.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.publish(tick("fed", "mid", 50.0));   // slotted, not yet drained
+
+  s.revoke(sub, "fed", "mid");
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+  EXPECT_EQ(s.stats().revocations, 1u);
+  EXPECT_GT(s.stats().withheld, 0u);
+}
+
+TEST(ConflatingSession, APublishAfterRevocationCannotSlipThrough) {
+  // The other half of the window: a publish that lands after the revoke
+  // must not be delivered either, even though the roster still lists the
+  // subscriber for that topic. Delivery re-checks, so it is withheld.
+  ConflatingSession s;
+  s.set_entitlements(E::Restricted);
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.grant(sub, "fed", "mid");
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.revoke(sub, "fed", "mid");
+
+  s.publish(tick("fed", "mid", 99.0));
+  EXPECT_EQ(s.drain(sub), 0u);
+  EXPECT_EQ(calls, 0);
+
+  // And a re-grant restores delivery without needing a resubscribe.
+  s.grant(sub, "fed", "mid");
+  s.publish(tick("fed", "mid", 101.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_EQ(calls, 1);
+}
+
+TEST(ConflatingSession, OpenModeIgnoresEntitlementsEntirely) {
+  // The replay path never grants anything; it must keep working.
+  ConflatingSession s;  // Open by default
+  const auto sub = s.add_subscriber();
+  int calls = 0;
+  s.subscribe_for(sub, "fed", "mid", [&](const Update&) { ++calls; });
+  s.publish(tick("fed", "mid", 7.0));
+  EXPECT_EQ(s.drain(sub), 1u);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(s.stats().subscriptions_denied, 0u);
+  EXPECT_EQ(s.stats().withheld, 0u);
+}
