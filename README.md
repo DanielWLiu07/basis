@@ -181,6 +181,16 @@ companion voxel-engine project follows). `scripts/bench.sh` regenerates the
 summary below from the committed capture artifacts through `replay --json`, so
 every figure traces to one command. Recorded so far:
 
+- `docs/bench/book_reconstruction.md`: consuming a venue API is not the
+  hard part; knowing that the book you assembled is the book the venue has
+  is. `feed::BookSequencer` implements snapshot-and-diff reconciliation
+  (buffer before the snapshot, discard what it already contains, require
+  the first event to straddle it, then demand unbroken `U == prev u + 1`),
+  and `basis book-verify` proves it on a committed live capture: 230
+  events applied in sequence, and the reconstructed book matches the
+  venue's own independently taken REST snapshot on all 40 compared levels
+  with zero mismatches, at exactly the same sequence id. CI runs it on
+  every commit.
 - `docs/bench/ingest.md`: the prediction markets are slow, about 19
   messages/sec on the committed capture, which makes a latency number hard
   to interpret. So the engine also ingests Binance, which is there because
