@@ -13,6 +13,87 @@ model::Side opposite(model::Side s) {
 
 }  // namespace
 
+void OrderIndex::grow(std::size_t capacity) {
+  std::size_t cap = 16;
+  while (cap < capacity) cap <<= 1;
+  std::vector<Bucket> old;
+  old.swap(buckets_);
+  buckets_.assign(cap, Bucket{});
+  mask_ = cap - 1;
+  shift_ = 64 - static_cast<int>(std::countr_zero(cap));
+  size_ = 0;
+  for (const auto& b : old) {
+    if (b.slot != kAbsent) insert(b.id, b.slot);
+  }
+}
+
+void OrderIndex::reserve(std::size_t orders) {
+  // Keep the load factor at or below one half: linear probing degrades
+  // sharply past that, and the table is small next to the order slab.
+  if (orders * 2 > buckets_.size()) grow(orders * 2);
+}
+
+std::uint32_t OrderIndex::find(OrderId id) const {
+  if (buckets_.empty()) return kAbsent;
+  std::size_t i = home_of(id);
+  while (buckets_[i].slot != kAbsent) {
+    if (buckets_[i].id == id) return buckets_[i].slot;
+    i = (i + 1) & mask_;
+  }
+  return kAbsent;
+}
+
+void OrderIndex::insert(OrderId id, std::uint32_t slot) {
+  if (buckets_.empty() || (size_ + 1) * 2 > buckets_.size()) {
+    grow(buckets_.empty() ? 32 : buckets_.size() * 2);
+  }
+  std::size_t i = home_of(id);
+  while (buckets_[i].slot != kAbsent) {
+    if (buckets_[i].id == id) {  // overwrite an existing mapping
+      buckets_[i].slot = slot;
+      return;
+    }
+    i = (i + 1) & mask_;
+  }
+  buckets_[i] = Bucket{id, slot};
+  ++size_;
+}
+
+bool OrderIndex::erase(OrderId id) {
+  if (buckets_.empty()) return false;
+  std::size_t i = home_of(id);
+  while (buckets_[i].slot != kAbsent) {
+    if (buckets_[i].id == id) break;
+    i = (i + 1) & mask_;
+  }
+  if (buckets_[i].slot == kAbsent) return false;
+
+  // Backward shift: walk the probe run after the hole and pull back any
+  // entry whose home position is at or before it, so every remaining
+  // entry stays reachable by a probe that stops at the first empty
+  // bucket. This is what removes the need for tombstones.
+  std::size_t j = i;
+  for (;;) {
+    buckets_[i].slot = kAbsent;
+    std::size_t home;
+    do {
+      j = (j + 1) & mask_;
+      if (buckets_[j].slot == kAbsent) {
+        --size_;
+        return true;
+      }
+      home = home_of(buckets_[j].id);
+    } while ((i <= j) ? (i < home && home <= j) : (i < home || home <= j));
+    buckets_[i] = buckets_[j];
+    i = j;
+  }
+}
+
+void OrderIndex::clear() {
+  std::fill(buckets_.begin(), buckets_.end(), Bucket{});
+  size_ = 0;
+}
+
 int LimitOrderBook::highest(const Ladder& l) {
   // Bit p of word (p >> 6) marks price p, so the highest occupied price is
   // the highest set bit across the two words. Price 0 is never marked, so
@@ -109,7 +190,7 @@ SubmitResult LimitOrderBook::submit(OrderId id, model::Side side,
     result.reject = RejectReason::NonPositiveSize;
     return result;
   }
-  if (index_of_id_.find(id) != index_of_id_.end()) {
+  if (index_of_id_.find(id) != OrderIndex::kAbsent) {
     result.reject = RejectReason::DuplicateOrderId;
     return result;
   }
@@ -158,23 +239,22 @@ SubmitResult LimitOrderBook::submit(OrderId id, model::Side side,
     const std::uint32_t idx = alloc_order();
     slab_[idx] = Order{id, remaining, price_cents, side, kNil, kNil};
     link_back(ladder(side), idx);
-    index_of_id_.emplace(id, idx);
+    index_of_id_.insert(id, idx);
     result.resting = remaining;
   }
   return result;
 }
 
 bool LimitOrderBook::cancel(OrderId id) {
-  const auto it = index_of_id_.find(id);
-  if (it == index_of_id_.end()) return false;
-  const std::uint32_t idx = it->second;
+  const std::uint32_t idx = index_of_id_.find(id);
+  if (idx == OrderIndex::kAbsent) return false;
   Ladder& l = ladder(slab_[idx].side);
   const int price = slab_[idx].price;
   const std::int64_t size = slab_[idx].size;
   l.levels[price].size -= size;
   l.total -= size;
   unlink(l, idx);
-  index_of_id_.erase(it);
+  index_of_id_.erase(id);
   free_order(idx);
   return true;
 }
@@ -193,14 +273,14 @@ std::int64_t LimitOrderBook::total_size(model::Side side) const {
 }
 
 std::optional<std::int64_t> LimitOrderBook::queue_ahead(OrderId id) const {
-  const auto it = index_of_id_.find(id);
-  if (it == index_of_id_.end()) return std::nullopt;
-  const Order& target = slab_[it->second];
+  const std::uint32_t idx = index_of_id_.find(id);
+  if (idx == OrderIndex::kAbsent) return std::nullopt;
+  const Order& target = slab_[idx];
   const Ladder& l = ladder(target.side);
   std::int64_t ahead = 0;
-  for (std::uint32_t idx = l.levels[target.price].head;
-       idx != kNil && idx != it->second; idx = slab_[idx].next) {
-    ahead += slab_[idx].size;
+  for (std::uint32_t list = l.levels[target.price].head;
+       list != kNil && list != idx; list = slab_[list].next) {
+    ahead += slab_[list].size;
   }
   return ahead;
 }

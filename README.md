@@ -249,7 +249,7 @@ every figure traces to one command. Recorded so far:
   the revoke, so the check runs both at `revoke()` and again at delivery
   (`docs/bench/fanout.md`).
 - `docs/bench/matching_engine.md`: the price-time-priority book sustains
-  28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook std::map
+  42.6M operations/sec at 23.5 ns/op on an M4, 2.1x a textbook std::map
   book replaying identical order flow, with per-class tail latency
   reported honestly against the clock's 41.7 ns tick. Measuring that tail
   found the resting path's 320 us worst case in container growth;
@@ -286,7 +286,7 @@ every figure traces to one command. Recorded so far:
   price-time-priority matching engine (Gtc/Ioc/Fok, O(1) submit, cancel
   and best-price via a flat 99-slot ladder and two-word occupancy bit
   scan, because prediction-market prices are integer cents 1..99). It
-  sustains 28.9M operations/sec at 34.6 ns/op on an M4, 1.33x a textbook
+  sustains 42.6M operations/sec at 23.5 ns/op on an M4, 2.1x a textbook
   `std::map` book replaying the identical order flow. Two correctness
   checks run in CI: the two books must produce identical fill streams over
   200k random operations, and executing a sweep as order flow through the

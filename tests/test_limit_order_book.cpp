@@ -363,3 +363,43 @@ TEST(LimitOrderBook, QueueAheadTracksFifoPosition) {
   book.submit(51, Side::Ask, 50, 10, TimeInForce::Ioc, &fills);
   EXPECT_EQ(*book.queue_ahead(3), 0);
 }
+
+TEST(LimitOrderBook, OrderIndexSurvivesHeavyChurnAndCollisions) {
+  // The order index is open-addressed with backward-shift deletion, which
+  // is the subtle half: get it wrong and an entry becomes unreachable
+  // because a probe stops at a hole that should have been filled. That
+  // shows up as a cancel silently failing, so this hammers add/cancel
+  // with ids chosen to collide and then checks every survivor is still
+  // findable and every removed one is gone.
+  LimitOrderBook book;
+  constexpr int kRounds = 4'000;
+  std::vector<basis::exec::OrderId> live;
+  std::vector<Fill> fills;
+  for (int i = 0; i < kRounds; ++i) {
+    // Ids spaced by a power of two collide in the low bits, which is the
+    // adversarial case for a masked hash table.
+    const auto id = static_cast<basis::exec::OrderId>(1 + i * 1024);
+    const auto r = book.submit(id, Side::Bid, 20 + (i % 40), 5,
+                               TimeInForce::Gtc, &fills);
+    ASSERT_TRUE(r.accepted());
+    live.push_back(id);
+    // Remove roughly a third as we go, from the middle of the run so the
+    // deletions land inside probe chains rather than at their ends.
+    if (i % 3 == 0 && live.size() > 2) {
+      const auto victim = live[live.size() / 2];
+      ASSERT_TRUE(book.cancel(victim)) << "cancel lost order " << victim;
+      live.erase(live.begin() + static_cast<long>(live.size() / 2));
+    }
+  }
+  EXPECT_EQ(book.live_orders(), live.size());
+  // Every survivor must still be reachable: queue_ahead only answers for
+  // ids the index can find.
+  for (auto id : live) {
+    EXPECT_TRUE(book.queue_ahead(id).has_value())
+        << "index lost a live order: " << id;
+  }
+  // And a second cancel of an already-removed id must fail cleanly.
+  for (auto id : live) ASSERT_TRUE(book.cancel(id));
+  EXPECT_EQ(book.live_orders(), 0u);
+  for (auto id : live) EXPECT_FALSE(book.cancel(id));
+}
