@@ -72,17 +72,29 @@ timed region.
 Apple M4, Release, 2,000,000 operations (1.17M of them producing fills,
 65.6M contracts traded):
 
-    flat ladder     34.6 ns/op     28.9M ops/sec
-    std::map book   45.7 ns/op     21.9M ops/sec
-    ratio           1.33x
+    flat ladder     23.5 ns/op     42.6M ops/sec
+    std::map book   49.5 ns/op     20.2M ops/sec
+    ratio           2.1x
 
-Stable across runs at 1.25 to 1.33x. The ratio is modest by design: both
-books share the same order-id hash map and the same matching loop, so the
-ladder's advantage is confined to price lookup and best-price
-maintenance. The absolute number is the headline (an engine that keeps up
-with any prediction-market venue's message rate by three orders of
-magnitude); the ratio is the evidence that the bounded-price insight is
-worth the specialized layout.
+The first version of this book shared the reference implementation's
+order-id map, a std::unordered_map, and measured 34.6 ns/op and 1.33x.
+That map was on the hot path twice per matched order (a lookup to reject
+a duplicate id, an erase when a maker fills) and cost a heap allocation,
+a pointer chase and a modulo every time. Replacing it with a flat
+open-addressing table - linear probing, Fibonacci hashing on the high
+bits, backward-shift deletion instead of tombstones - took the book to
+23.5 ns/op with the ratio to the reference now 2.1x.
+
+Measurement note, because it changes how to read the numbers: the 34.6
+ns/op figure was taken on an idle machine, and 23.5 ns/op is best-of-six
+on a machine at load 7. The improvement is therefore understated here,
+not flattered. The ratio is the load-robust half of the comparison, since
+both implementations are timed in the same run under the same conditions.
+
+Tombstones were the obvious alternative and are wrong for this workload
+specifically: a book where nearly every order is eventually filled or
+cancelled accumulates gravestones until every probe walks them. Backward
+shifting keeps the table's occupancy equal to its live-order count.
 
 ## Tail latency
 

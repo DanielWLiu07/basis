@@ -11,6 +11,49 @@ namespace basis::exec {
 
 using OrderId = std::uint64_t;
 
+// Open-addressing map from order id to slab index, replacing the
+// std::unordered_map this book used to carry. It is on the hot path
+// twice per matched order (one lookup to reject a duplicate id, one
+// erase when a maker fills), and a node-based map pays a heap
+// allocation, a pointer chase and a modulo for each. This is a flat
+// array of buckets with linear probing: one cache line usually answers
+// the query, and steady-state churn allocates nothing.
+//
+// Deletion uses backward shifting rather than tombstones. Tombstones are
+// simpler but they accumulate under exactly this workload - a book where
+// most orders are eventually cancelled or filled - until the table is
+// mostly gravestones and every probe walks them.
+class OrderIndex {
+ public:
+  static constexpr std::uint32_t kAbsent = 0xFFFFFFFFu;
+
+  void reserve(std::size_t orders);
+  std::uint32_t find(OrderId id) const;  // kAbsent when not present
+  void insert(OrderId id, std::uint32_t slot);
+  bool erase(OrderId id);
+  std::size_t size() const { return size_; }
+  void clear();
+
+ private:
+  struct Bucket {
+    OrderId id = 0;
+    std::uint32_t slot = kAbsent;
+  };
+
+  // Fibonacci hashing, taking the HIGH bits of the product: order ids are
+  // typically sequential, and masking the low bits of the id itself would
+  // pile every burst of consecutive ids into one run of buckets.
+  std::size_t home_of(OrderId id) const {
+    return static_cast<std::size_t>((id * 0x9E3779B97F4A7C15ull) >> shift_);
+  }
+  void grow(std::size_t capacity);
+
+  std::vector<Bucket> buckets_;
+  std::size_t mask_ = 0;
+  std::size_t size_ = 0;
+  int shift_ = 64;
+};
+
 // Prediction-market contracts settle at $0 or $1, so a resting price is an
 // integer cent strictly inside that range: 1..99, which is also the implied
 // probability. That bound is what shapes this book. A general equity book
@@ -107,7 +150,7 @@ class LimitOrderBook {
   std::optional<std::int64_t> queue_ahead(OrderId id) const;
 
   std::size_t live_orders() const { return index_of_id_.size(); }
-  bool empty() const { return index_of_id_.empty(); }
+  bool empty() const { return index_of_id_.size() == 0; }
   void clear();
 
  private:
@@ -167,7 +210,7 @@ class LimitOrderBook {
   Ladder asks_;
   std::vector<Order>         slab_;
   std::vector<std::uint32_t> free_slots_;
-  std::unordered_map<OrderId, std::uint32_t> index_of_id_;
+  OrderIndex index_of_id_;
 };
 
 }  // namespace basis::exec
