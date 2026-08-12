@@ -41,9 +41,14 @@ class FeedLogWriter {
 
 class FeedLogReader {
  public:
-  // No real WS message approaches this; a longer line is a corrupt or
-  // hostile file, and bounding it keeps one bad line from ballooning RSS.
-  static constexpr std::size_t kMaxLineBytes = 1 << 20;  // 1 MiB
+  // Bounding the line keeps one corrupt or hostile file from ballooning
+  // RSS. This was 1 MiB under the assumption that no real message comes
+  // close, which turned out to be wrong: a Coinbase level2 snapshot for
+  // BTC-USD is 45,177 price levels and 1.13 MiB on the wire, so the cap
+  // silently rejected the one message the rest of the stream is diffed
+  // against. 8 MiB clears that with room for a deeper book while still
+  // bounding the damage a bad file can do.
+  static constexpr std::size_t kMaxLineBytes = 8u << 20;  // 8 MiB
 
   explicit FeedLogReader(const std::string& path);
 

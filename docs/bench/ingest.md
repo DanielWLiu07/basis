@@ -13,22 +13,37 @@ symbols on `@bookTicker` plus 40 on `@depth@100ms`.
 
     ./build/src/basis ingest-bench docs/bench/binance-90s.feedlog
 
-    records=24048 ok=24048 ignored=0 malformed=0 deltas=73302
+    records=24048 ok=24048 ignored=0 malformed=0 deltas=90411
     venue_span_s=89.2   venue_msgs_per_sec=269
-    engine_ms=25.8      engine_msgs_per_sec=932471
-                        engine_deltas_per_sec=2842315   headroom=3461x
+    engine_ms=11.0      engine_msgs_per_sec=2189981
+                        engine_deltas_per_sec=8233465   headroom=8128x
+
+Best of five; the five runs spanned 2.00M to 2.19M messages/sec on a
+machine at load 4.4, median 2.15M.
 
 Read the two rates against each other. The venue, on a busy crypto book
 across 94 symbols, sustains 269 messages a second. The same pipeline
-parses and applies those messages at 932,471 a second. The engine is not
-the bottleneck by three and a half orders of magnitude, and that is the
-honest reading of every latency number in `docs/bench/latency.md`: they
-describe an engine with enormous headroom over the venues it consumes,
-not an engine that has been pushed to its limit.
+parses and applies those messages at 2.19 million a second. The engine is
+not the bottleneck by four orders of magnitude, and that is the honest
+reading of every latency number in `docs/bench/latency.md`: they describe
+an engine with enormous headroom over the venues it consumes, not an
+engine pushed to its limit.
 
 `ok=24048, malformed=0` is the other half of the result. Every message the
 venue sent parsed, across 73,302 prices, which is the coverage claim a
 parser written against documentation rather than data cannot make.
+
+These figures replace an earlier 932,471 messages/sec at 3,461x headroom,
+and the reason is a correctness fix rather than an optimization. A
+`bookTicker` message replaces the touch, but the parser emitted it as two
+`Set` deltas without clearing the previous best bid and ask, so the book
+accumulated stale levels and grew without bound - hundreds of levels deep
+on this capture, with a crossed spread. Every apply was therefore doing
+more work on a book that was also wrong. Clearing the touch first (see
+`docs/bench/cross_venue_lead.md`, where the bug surfaced) both fixes the
+book and cuts the work, which is why the delta count rose to 90,411 while
+the time fell. A throughput benchmark cannot catch a wrong book; it took
+a measurement that actually read prices out of one.
 
 ## The price-model decision
 

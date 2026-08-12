@@ -45,6 +45,20 @@ struct ParseResult {
   std::uint32_t hashes_verified = 0;
   std::uint32_t hashes_mismatched = 0;
   std::uint32_t hashes_unverifiable = 0;
+
+  // Price levels the message carried that this engine's price model cannot
+  // represent, dropped from the deltas but counted here rather than
+  // silently discarded.
+  //
+  // This is not a hypothetical. A real Coinbase level2 snapshot for BTC-USD
+  // carries 45,177 levels, five of which are asks above $20,000,000 (the
+  // deepest at $138,991,023) -- resting joke orders two thousand times the
+  // market price, which the venue is happy to publish. They cannot fit in
+  // an int32 of cents. The distinction matters because the alternative,
+  // treating an unrepresentable level as a malformed message, threw away
+  // the entire book image over levels that can never be top of book, and
+  // left every later diff applying to an empty book.
+  std::uint32_t levels_unrepresentable = 0;
 };
 
 constexpr const char* to_string(ParseStatus s) {

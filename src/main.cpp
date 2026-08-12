@@ -9,12 +9,18 @@
 
 #include "analytics/consensus.h"
 #include <chrono>
+#include <array>
 #include <cmath>
 #include <map>
 
 #include "bench/fanout_bench.h"
+#include "analytics/event_study.h"
+#include "analytics/lead_lag.h"
 #include "feed/binance_parser.h"
+#include "feed/coinbase_parser.h"
 #include "feed/book_sequencer.h"
+#include "feed/feed_log.h"
+#include "model/order_book.h"
 #include "model/unified_book.h"
 #include "bench/lob_bench.h"
 #include "bench/replay_harness.h"
@@ -86,6 +92,7 @@ int usage() {
       "      and check it against the venue's own snapshot\n"
       "\n"
       "  basis ingest-bench <capture.feedlog>\n"
+      "  basis xvenue-lead <capture.feedlog> [--grid-ms N] [--max-lag-bins N]\n"
       "      parse + book-apply throughput on a captured venue feed, with\n"
       "      the venue's own message rate alongside it\n"
       "\n"
@@ -912,6 +919,180 @@ int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
   return 0;
 }
 
+// Cross-venue lead-lag on two venues quoting the SAME instrument, from one
+// capture in which both sides were stamped by the same clock. Until this
+// existed the lead-lag estimator had only ever been run against a synthetic
+// session with a known injected lead, which proves the estimator recovers
+// what was put in but says nothing about a real market.
+//
+// The measurement is deliberately conservative about what it can resolve;
+// see docs/bench/cross_venue_lead.md for the bias budget. Two effects push
+// the estimate in a known direction and neither is a property of price
+// discovery: Coinbase batches level2 updates on a 50 ms timer, and the two
+// venues sit at different network distances. Both delay Coinbase relative
+// to Binance, so a small positive "Binance leads" result is exactly what
+// the instrument would print even if the venues moved together.
+int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
+  if (args.empty()) return usage();
+  const std::string path(args[0]);
+  std::int64_t grid_ms = 50;
+  int max_lag_bins = 100;
+  // A "repricing" has to be scaled to the instrument. The estimator's
+  // default is 1 cent, which is the right bar for a contract that trades
+  // between 1c and 99c and pure noise on one quoting around $63,000; a
+  // dollar is roughly one tick of genuine movement in BTC.
+  std::int64_t move_cents = 100;
+  std::int64_t follow_ms = 2000;
+  // Observe both venues on one clock rather than on every message.
+  //
+  // This is not a tuning knob, it corrects a bias. Binance pushes on every
+  // change of the touch while Coinbase coalesces on a 50 ms timer, so
+  // sampling per message compares Binance's many small steps against
+  // Coinbase's few coarse jumps. A fixed "a repricing is N cents" bar then
+  // catches most of Coinbase's jumps and misses Binance's gradual moves,
+  // and the event study reads that as Coinbase moving far more often --
+  // an artifact of update granularity that looks exactly like Coinbase
+  // being the noisy follower. Sampling both on the same grid with the last
+  // known mid measures each venue's movement over identical windows.
+  // 0 restores per-message sampling.
+  std::int64_t sample_ms = 50;
+  for (std::size_t i = 1; i + 1 < args.size(); i += 2) {
+    const auto v = parse_int(args[i + 1]);
+    if (!v) continue;
+    if (args[i] == "--grid-ms") grid_ms = *v;
+    else if (args[i] == "--max-lag-bins") max_lag_bins = static_cast<int>(*v);
+    else if (args[i] == "--move-cents") move_cents = *v;
+    else if (args[i] == "--follow-ms") follow_ms = *v;
+    else if (args[i] == "--sample-ms") sample_ms = *v;
+  }
+  if (grid_ms <= 0 || max_lag_bins <= 0) {
+    basis::log::error("xvenue-lead: grid-ms and max-lag-bins must be positive");
+    return 1;
+  }
+
+  basis::feed::FeedLogReader reader(path);
+  if (!reader.ok()) {
+    basis::log::error("xvenue-lead: cannot open " + path);
+    return 1;
+  }
+
+  basis::feed::BinanceParser binance;
+  basis::feed::CoinbaseParser coinbase;
+  // One book per venue. The capture carries exactly one product per venue;
+  // that is asserted below rather than assumed, because silently averaging
+  // two instruments into one mid would produce a plausible-looking number
+  // out of nonsense.
+  std::array<basis::model::OrderBook, basis::model::kVenueCount> books;
+  std::array<std::string, basis::model::kVenueCount> markets;
+  std::array<std::uint64_t, basis::model::kVenueCount> msgs{};
+  bool mixed_markets = false;
+
+  basis::analytics::LeadLagConfig cfg;
+  cfg.grid_ns = grid_ms * 1'000'000;
+  cfg.max_lag_bins = max_lag_bins;
+  basis::analytics::CrossCorrelationEstimator est(cfg);
+  // The cross-correlation estimator resamples onto a fixed grid, so it can
+  // never resolve a lead shorter than one bin. The event study works on the
+  // raw irregular timestamps instead and answers a different question --
+  // whose moves get answered, and how fast -- so it is not bounded by the
+  // grid. Running both is the point: they fail in different ways.
+  basis::analytics::EventStudyEstimator ev(
+      {.move_cents = static_cast<double>(move_cents),
+       .follow_window_ns = follow_ms * 1'000'000});
+
+  std::uint64_t records = 0, malformed = 0, observations = 0;
+  std::uint64_t unrepresentable = 0;
+  std::int64_t next_sample_ns = 0;
+  std::int64_t first_ns = 0, last_ns = 0;
+  while (auto rec = reader.next()) {
+    ++records;
+    if (first_ns == 0) first_ns = rec->recv_ns;
+    last_ns = rec->recv_ns;
+    const auto vi = static_cast<std::size_t>(rec->venue);
+    basis::feed::ParseResult r =
+        rec->venue == basis::model::Venue::Coinbase
+            ? coinbase.parse(rec->payload, rec->recv_ns)
+            : binance.parse(rec->payload, rec->recv_ns);
+    unrepresentable += r.levels_unrepresentable;
+    if (r.status == basis::feed::ParseStatus::Malformed) { ++malformed; continue; }
+    if (r.status != basis::feed::ParseStatus::Ok) continue;
+    ++msgs[vi];
+    for (const auto& d : r.deltas) {
+      if (markets[vi].empty()) markets[vi] = std::string(d.market);
+      else if (markets[vi] != d.market) mixed_markets = true;
+      books[vi].apply(d);
+    }
+    // Sample whenever either venue moves, but only once both are two-sided;
+    // the estimator resamples onto its own grid, so an uneven arrival rate
+    // between the venues is handled there rather than by dropping data.
+    const auto a = books[static_cast<std::size_t>(basis::model::Venue::Binance)].mid();
+    const auto b = books[static_cast<std::size_t>(basis::model::Venue::Coinbase)].mid();
+    if (a && b) {
+      if (sample_ms <= 0) {
+        est.observe(*a, *b, rec->recv_ns);
+        ev.observe(*a, *b, rec->recv_ns);
+        ++observations;
+      } else {
+        const std::int64_t step = sample_ms * 1'000'000;
+        if (next_sample_ns == 0) next_sample_ns = rec->recv_ns;
+        while (rec->recv_ns >= next_sample_ns) {
+          est.observe(*a, *b, next_sample_ns);
+          ev.observe(*a, *b, next_sample_ns);
+          ++observations;
+          next_sample_ns += step;
+        }
+      }
+    }
+  }
+
+  if (mixed_markets) {
+    basis::log::error("xvenue-lead: a venue quoted more than one product; "
+                      "the mid would mix instruments");
+    return 1;
+  }
+  const auto bi = static_cast<std::size_t>(basis::model::Venue::Binance);
+  const auto ci = static_cast<std::size_t>(basis::model::Venue::Coinbase);
+  if (msgs[bi] == 0 || msgs[ci] == 0) {
+    basis::log::error("xvenue-lead: capture does not carry both venues");
+    return 1;
+  }
+
+  const double span_s = static_cast<double>(last_ns - first_ns) / 1e9;
+  const auto res = est.estimate();
+  std::printf("XVENUE span_s=%.1f records=%llu malformed=%llu "
+              "unrepresentable_levels=%llu binance_msgs=%llu "
+              "coinbase_msgs=%llu observations=%llu\n",
+              span_s, u(records), u(malformed), u(unrepresentable),
+              u(msgs[bi]), u(msgs[ci]), u(observations));
+  std::printf("XVENUE binance_market=%s coinbase_market=%s "
+              "grid_ms=%lld max_lag_bins=%d sample_ms=%lld\n",
+              markets[bi].c_str(), markets[ci].c_str(),
+              static_cast<long long>(grid_ms), max_lag_bins,
+              static_cast<long long>(sample_ms));
+  std::printf("XVENUE lead_ms=%.1f corr=%.4f samples=%llu "
+              "ci_low_ms=%.1f ci_high_ms=%.1f resamples=%llu significant=%d\n",
+              res.lead_seconds * 1000.0, res.correlation, u(res.samples),
+              res.ci_low_seconds * 1000.0, res.ci_high_seconds * 1000.0,
+              u(res.resamples), res.lead_is_significant() ? 1 : 0);
+  const auto evr = ev.estimate();
+  std::printf("XVENUE event_move_cents=%lld follow_window_ms=%lld\n",
+              static_cast<long long>(move_cents),
+              static_cast<long long>(follow_ms));
+  std::printf("XVENUE binance_moves=%llu answered=%llu rate=%.3f "
+              "median_follow_ms=%.1f\n",
+              u(evr.moves), u(evr.followed), evr.forward_follow_rate(),
+              evr.median_follow_seconds * 1000.0);
+  std::printf("XVENUE coinbase_moves=%llu answered=%llu rate=%.3f "
+              "median_follow_ms=%.1f\n",
+              u(evr.reverse_moves), u(evr.reverse_followed),
+              evr.reverse_follow_rate(),
+              evr.reverse_median_follow_seconds * 1000.0);
+  std::printf("XVENUE follow_rate_z=%.2f confirmed_leader=%d\n",
+              evr.follow_rate_z(), evr.confirmed_leader());
+  std::printf("XVENUE note=positive_lead_means_binance_leads_coinbase\n");
+  return 0;
+}
+
 // Reconstructs a book from a venue diff stream through the sequencer and
 // checks it against a snapshot the venue produced independently. The
 // capture interleaves three record kinds: diff, snapshot (the one joined
@@ -1602,6 +1783,7 @@ int main(int argc, char** argv) {
   if (command == "lob-bench") return run_lob_bench_cmd(rest);
   if (command == "fanout-bench") return run_fanout_bench_cmd(rest);
   if (command == "ingest-bench") return run_ingest_bench_cmd(rest);
+  if (command == "xvenue-lead") return run_xvenue_lead_cmd(rest);
   if (command == "book-verify") return run_book_verify_cmd(rest);
   if (command == "synth") return run_synth(rest);
   if (command == "replay") return run_replay(rest);
