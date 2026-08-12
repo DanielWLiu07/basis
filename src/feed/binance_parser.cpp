@@ -1,9 +1,6 @@
 #include "feed/binance_parser.h"
 
-#include <cmath>
-#include <cstdlib>
-#include <cstring>
-
+#include "feed/decimal.h"
 #include "model/book_delta.h"
 
 namespace basis::feed {
@@ -14,51 +11,6 @@ using model::Action;
 using model::BookDelta;
 using model::Side;
 using model::Venue;
-
-// Binance quantities are base units scaled by 1e8, the venue's own
-// convention, which keeps the whole range in int64.
-constexpr double kSizeScale = 1e8;
-
-// A decimal string to integer cents, exact or not at all. Returning false
-// rather than rounding is the point: a price off the cent grid cannot be
-// represented in this engine's price model, and silently truncating it
-// would put a wrong book in front of the analytics.
-bool to_exact_cents(std::string_view text, int* out) {
-  if (text.empty()) return false;
-  char* end = nullptr;
-  // simdjson hands back views into its own padded buffer, which is not
-  // guaranteed null-terminated at the view's end; copy the few bytes a
-  // price occupies rather than reading past it.
-  char buf[64];
-  if (text.size() >= sizeof(buf)) return false;
-  std::memcpy(buf, text.data(), text.size());
-  buf[text.size()] = '\0';
-  const double value = std::strtod(buf, &end);
-  if (end != buf + text.size()) return false;
-  if (!std::isfinite(value) || value < 0.0) return false;
-  const double cents = value * 100.0;
-  const double rounded = std::nearbyint(cents);
-  if (std::fabs(cents - rounded) > 1e-6) return false;  // off the cent grid
-  if (rounded > 2'000'000'000.0) return false;          // beyond int cents
-  *out = static_cast<int>(rounded);
-  return true;
-}
-
-bool to_scaled_size(std::string_view text, std::int64_t* out) {
-  if (text.empty()) return false;
-  char buf[64];
-  if (text.size() >= sizeof(buf)) return false;
-  std::memcpy(buf, text.data(), text.size());
-  buf[text.size()] = '\0';
-  char* end = nullptr;
-  const double value = std::strtod(buf, &end);
-  if (end != buf + text.size()) return false;
-  if (!std::isfinite(value) || value < 0.0) return false;
-  const double scaled = std::nearbyint(value * kSizeScale);
-  if (scaled > 9.0e18) return false;
-  *out = static_cast<std::int64_t>(scaled);
-  return true;
-}
 
 bool push_level(ParseResult& out, std::string_view market, Side side,
                 std::string_view price, std::string_view qty,
@@ -154,6 +106,21 @@ ParseResult BinanceParser::parse(std::string_view raw, std::int64_t recv_ns,
     out.status = ParseStatus::Ignored;  // trade, kline, control frame
     return out;
   }
+  // bookTicker REPLACES the touch; it is not a diff against the levels
+  // already in the book. Without this Clear the old best bid and ask stay
+  // resting, so best_bid() decays into the running maximum of every bid
+  // ever quoted and best_ask() into the running minimum. Measured on a
+  // 40-minute BTCUSDT capture, the book reached 204 phantom levels and a
+  // spread of MINUS $54.87 by message 20,000, and the mid it produced
+  // moved over a $25 band where the real one moved $55. Nothing caught it
+  // because the only consumer of this stream measured throughput, where a
+  // wrong book costs nothing.
+  BookDelta reset;
+  reset.venue = Venue::Binance;
+  reset.market = symbol;
+  reset.action = Action::Clear;
+  reset.ts_ns = recv_ns;
+  out.deltas.push_back(reset);
   if (!push_level(out, symbol, Side::Bid, bid_px, bid_qty, recv_ns) ||
       !push_level(out, symbol, Side::Ask, ask_px, ask_qty, recv_ns)) {
     out.deltas.clear();

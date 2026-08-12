@@ -196,10 +196,26 @@ every figure traces to one command. Recorded so far:
   to interpret. So the engine also ingests Binance, which is there because
   it produces load: 90 seconds of live public market data across 94
   symbols, 24,048 messages with zero malformed. The venue sustains 269
-  messages/sec; the same pipeline parses and applies them at 932,471/sec,
-  2.8M deltas/sec. Three and a half orders of magnitude of headroom is the
-  honest reading of every latency figure below - an engine with room over
-  the venues it consumes, not one pushed to its limit.
+  messages/sec; the same pipeline parses and applies them at 2,189,981/sec,
+  8.2M deltas/sec. Four orders of magnitude of headroom is the honest
+  reading of every latency figure below - an engine with room over the
+  venues it consumes, not one pushed to its limit. (This was 932,471/sec
+  until a book-correctness fix; see the cross-venue entry below.)
+- `docs/bench/cross_venue_lead.md`: the first lead-lag measurement in this
+  repo taken on a real market rather than a synthetic session with a lead
+  injected on purpose. Binance BTCUSDT against Coinbase BTC-USD, both
+  sockets read by one process so the two streams share a clock, 45 minutes
+  and 204,864 messages with zero malformed. A repricing on Binance is
+  answered by Coinbase 57.7% of the time; one on Coinbase is answered by
+  Binance 26.4% of the time (two-proportion z = 11.76), and the gap holds
+  at every threshold from $0.25 to $2.00. The measurement is biased
+  *against* that result: this host sits about 86 ms farther from Binance
+  than from Coinbase, which both suppresses the forward follow rate and
+  inflates the reverse one. Building it also exposed a real bug in shipped
+  code - `bookTicker` replaces the touch, but the parser emitted it as
+  plain level updates, so the book accumulated stale levels until the
+  spread went to minus $54.87. Throughput benchmarks cannot see a wrong
+  book; a measurement that reads prices out of one can.
 - `docs/bench/latency.md`: on a committed 30-minute live capture (34,731
   messages, 266,597 deltas, zero loss), ingest-to-signal latency is
   p50 0.5 us / p99 37 us at ~840k records/sec, stable across runs.
