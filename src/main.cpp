@@ -50,6 +50,8 @@
 #include "analytics/lead_lag.h"
 #include "core/bounded_queue.h"
 #include "feed/feed_log.h"
+#include "feed_live/binance_feed.h"
+#include "feed_live/coinbase_feed.h"
 #include "feed_live/kalshi_feed.h"
 #include "feed_live/polymarket_feed.h"
 #include "net/kalshi_auth.h"
@@ -109,6 +111,7 @@ int usage() {
 #ifdef BASIS_HAS_NET
       "\n"
       "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
+      "      [--binance sym,sym] [--coinbase PROD,PROD]  (no credentials needed)\n"
       "               [--kalshi-key-id ID] [--kalshi-pem <key.pem>]\n"
       "      capture live feeds for the configured contracts; stop with\n"
       "      --seconds or ctrl-c (default config: configs/contracts.toml).\n"
@@ -156,6 +159,20 @@ std::string flag_string(const std::vector<std::string_view>& args,
 }
 
 // Presence-only flag: true if `name` appears anywhere in args.
+// Comma-separated flag values (--binance btcusdt,ethusdt). Empty entries
+// are dropped rather than turned into an empty subscription.
+std::vector<std::string> split_csv(std::string_view text) {
+  std::vector<std::string> out;
+  while (!text.empty()) {
+    const auto comma = text.find(',');
+    auto item = text.substr(0, comma);
+    if (!item.empty()) out.emplace_back(item);
+    if (comma == std::string_view::npos) break;
+    text.remove_prefix(comma + 1);
+  }
+  return out;
+}
+
 bool has_flag(const std::vector<std::string_view>& args,
               std::string_view name) {
   for (const auto& arg : args) {
@@ -895,6 +912,10 @@ int run_record(const std::vector<std::string_view>& args) {
     basis::log::error("record: bad --seconds value");
     return usage();
   }
+  const auto binance_symbols = split_csv(flag_string(args, "--binance", ""));
+  const auto coinbase_products =
+      split_csv(flag_string(args, "--coinbase", ""));
+  const bool crypto_only = !binance_symbols.empty() || !coinbase_products.empty();
   const auto kalshi_key_id = flag_string(args, "--kalshi-key-id", "");
   const auto kalshi_pem =
       flag_string(args, "--kalshi-pem", "secrets/kalshi.pem");
@@ -908,7 +929,7 @@ int run_record(const std::vector<std::string_view>& args) {
   }
   const auto& tokens = registry->polymarket_tokens();
   const auto& tickers = registry->kalshi_tickers();
-  if (tokens.empty()) {
+  if (tokens.empty() && !crypto_only) {
     basis::log::error("no polymarket tokens in " + config_path +
                       "; nothing to record");
     return 1;
@@ -944,14 +965,39 @@ int run_record(const std::vector<std::string_view>& args) {
     };
   };
 
-  basis::feed::PolymarketFeed poly_feed({.token_ids = tokens});
-  poly_feed.set_raw_tap(make_tap(basis::model::Venue::Polymarket));
+  // Every venue is optional and independent; the recorder captures
+  // whatever was asked for. Crypto needs no credentials and no registry
+  // entry, which is what makes a cross-venue capture reproducible by
+  // anyone who clones this.
+  // Naming a venue on the command line means recording that venue, so the
+  // registry-driven ones step aside rather than adding an unasked-for TLS
+  // connection and unrelated traffic to the capture.
+  std::unique_ptr<basis::feed::PolymarketFeed> poly_feed;
+  if (!tokens.empty() && !crypto_only) {
+    poly_feed = std::make_unique<basis::feed::PolymarketFeed>(
+        basis::feed::PolymarketFeed::Config{.token_ids = tokens});
+    poly_feed->set_raw_tap(make_tap(basis::model::Venue::Polymarket));
+  }
+
+  std::unique_ptr<basis::feed::BinanceFeed> binance_feed;
+  if (!binance_symbols.empty()) {
+    binance_feed = std::make_unique<basis::feed::BinanceFeed>(
+        basis::feed::BinanceFeed::Config{.symbols = binance_symbols});
+    binance_feed->set_raw_tap(make_tap(basis::model::Venue::Binance));
+  }
+
+  std::unique_ptr<basis::feed::CoinbaseFeed> coinbase_feed;
+  if (!coinbase_products.empty()) {
+    coinbase_feed = std::make_unique<basis::feed::CoinbaseFeed>(
+        basis::feed::CoinbaseFeed::Config{.product_ids = coinbase_products});
+    coinbase_feed->set_raw_tap(make_tap(basis::model::Venue::Coinbase));
+  }
 
   // Kalshi requires an authenticated session even for market data; without
   // credentials the recording is Polymarket-only, stated up front rather
   // than discovered in the replay.
   std::unique_ptr<basis::feed::KalshiFeed> kalshi_feed;
-  if (!kalshi_key_id.empty()) {
+  if (!kalshi_key_id.empty() && !crypto_only) {
     auto signer = basis::net::KalshiSigner::load(kalshi_pem, &error);
     if (!signer) {
       basis::log::error(error);
@@ -969,14 +1015,28 @@ int run_record(const std::vector<std::string_view>& args) {
   }
 
   std::signal(SIGINT, handle_sigint);
-  std::printf("recording %zu polymarket token(s)%s -> %s%s\n", tokens.size(),
-              kalshi_feed
-                  ? (" + " + std::to_string(tickers.size()) +
-                     " kalshi ticker(s)").c_str()
-                  : " (no kalshi credentials, polymarket only)",
-              out_path.c_str(), *seconds > 0 ? "" : "  (ctrl-c to stop)");
-  poly_feed.start();
+  std::string what;
+  const auto add_what = [&what](std::size_t n, const char* label) {
+    if (n == 0) return;
+    if (!what.empty()) what += " + ";
+    what += std::to_string(n);
+    what += ' ';
+    what += label;
+  };
+  add_what(poly_feed ? tokens.size() : 0, "polymarket token(s)");
+  add_what(kalshi_feed ? tickers.size() : 0, "kalshi ticker(s)");
+  add_what(binance_symbols.size(), "binance symbol(s)");
+  add_what(coinbase_products.size(), "coinbase product(s)");
+  std::printf("recording %s -> %s%s\n", what.c_str(), out_path.c_str(),
+              *seconds > 0 ? "" : "  (ctrl-c to stop)");
+  // All venues are stamped by one process reading every socket, so the
+  // streams share a clock. Two recorders, or two clocks, would put an
+  // unknown offset straight into any cross-venue timing measured from the
+  // capture (docs/bench/cross_venue_lead.md).
+  if (poly_feed) poly_feed->start();
   if (kalshi_feed) kalshi_feed->start();
+  if (binance_feed) binance_feed->start();
+  if (coinbase_feed) coinbase_feed->start();
 
   const auto started = std::chrono::steady_clock::now();
   auto next_report = started + std::chrono::seconds(5);
@@ -988,11 +1048,25 @@ int run_record(const std::vector<std::string_view>& args) {
     }
     if (now >= next_report) {
       next_report += std::chrono::seconds(5);
-      std::printf("  poly %llu msgs %llu deltas %llu malformed %llu recon",
-                  u(poly_feed.messages()),
-                  u(poly_feed.deltas()),
-                  u(poly_feed.malformed()),
-                  u(poly_feed.reconnects()));
+      if (poly_feed) {
+        std::printf("  poly %llu msgs %llu deltas %llu malformed %llu recon",
+                    u(poly_feed->messages()),
+                    u(poly_feed->deltas()),
+                    u(poly_feed->malformed()),
+                    u(poly_feed->reconnects()));
+      }
+      if (binance_feed) {
+        std::printf("  |  binance %llu msgs %llu deltas %llu malformed",
+                    u(binance_feed->messages()),
+                    u(binance_feed->deltas()),
+                    u(binance_feed->malformed()));
+      }
+      if (coinbase_feed) {
+        std::printf("  |  coinbase %llu msgs %llu deltas %llu malformed",
+                    u(coinbase_feed->messages()),
+                    u(coinbase_feed->deltas()),
+                    u(coinbase_feed->malformed()));
+      }
       if (kalshi_feed) {
         std::printf("  |  kalshi %llu msgs %llu deltas %llu gaps %llu recon",
                     u(kalshi_feed->messages()),
@@ -1004,20 +1078,35 @@ int run_record(const std::vector<std::string_view>& args) {
       std::printf("\n");
     }
   }
-  poly_feed.stop();
+  if (poly_feed) poly_feed->stop();
   if (kalshi_feed) kalshi_feed->stop();
+  if (binance_feed) binance_feed->stop();
+  if (coinbase_feed) coinbase_feed->stop();
 
   std::printf("wrote %llu records to %s (%llu rejected)\n",
               u(written.load()),
               out_path.c_str(),
               u(rejected.load()));
-  std::printf("  polymarket: %llu malformed, %llu reconnects, "
-              "%llu hashes verified, %llu mismatched\n",
-              u(poly_feed.malformed()),
-              u(poly_feed.reconnects()),
-              u(poly_feed.hashes_verified()),
-              u(
-                  poly_feed.hashes_mismatched()));
+  if (poly_feed) {
+    std::printf("  polymarket: %llu malformed, %llu reconnects, "
+                "%llu hashes verified, %llu mismatched\n",
+                u(poly_feed->malformed()),
+                u(poly_feed->reconnects()),
+                u(poly_feed->hashes_verified()),
+                u(poly_feed->hashes_mismatched()));
+  }
+  if (binance_feed) {
+    std::printf("  binance: %llu malformed, %llu reconnects\n",
+                u(binance_feed->malformed()),
+                u(binance_feed->reconnects()));
+  }
+  if (coinbase_feed) {
+    std::printf("  coinbase: %llu malformed, %llu reconnects, "
+                "%llu levels unrepresentable\n",
+                u(coinbase_feed->malformed()),
+                u(coinbase_feed->reconnects()),
+                u(coinbase_feed->unrepresentable()));
+  }
   if (kalshi_feed) {
     std::printf("  kalshi: %llu malformed, %llu gaps, %llu reconnects\n",
                 u(kalshi_feed->malformed()),

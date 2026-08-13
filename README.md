@@ -204,7 +204,8 @@ every figure traces to one command. Recorded so far:
 - `docs/bench/cross_venue_lead.md`: the first lead-lag measurement in this
   repo taken on a real market rather than a synthetic session with a lead
   injected on purpose. Binance BTCUSDT against Coinbase BTC-USD, both
-  sockets read by one process so the two streams share a clock, 45 minutes
+  sockets read by one process (`basis record --binance btcusdt --coinbase
+  BTC-USD`) so the two streams share a clock, 45 minutes
   and 204,864 messages with zero malformed. A repricing on Binance is
   answered by Coinbase 57.7% of the time; one on Coinbase is answered by
   Binance 26.4% of the time (two-proportion z = 11.76), and the gap holds
