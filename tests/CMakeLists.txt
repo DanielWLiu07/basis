@@ -35,6 +35,7 @@ if(BASIS_ENABLE_BDE)
 endif()
 if(BASIS_ENABLE_NET)
   target_sources(basis_tests PRIVATE
+    test_crypto_feeds.cpp
     test_kalshi_auth.cpp
     test_reconnect.cpp
     support/test_tls.cpp

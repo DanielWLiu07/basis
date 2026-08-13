@@ -13,11 +13,20 @@ both public.
 
 ## How the capture is taken
 
-One process opens both sockets and stamps each message with
-`time.time_ns()` the instant it returns from `recv`. That single detail
-is what makes the measurement possible at all: two processes, or two
-clocks, would put an unknown offset directly into the quantity being
-estimated.
+    basis record out.feedlog --binance btcusdt --coinbase BTC-USD --seconds 2700
+
+One process opens both sockets and stamps each message the instant it
+returns from the socket. That single detail is what makes the measurement
+possible at all: two processes, or two clocks, would put an unknown
+offset directly into the quantity being estimated.
+
+The engine captures its own data. `feed_live::BinanceFeed` and
+`feed_live::CoinbaseFeed` run on the same Boost.Beast TLS WebSocket
+client that carries Kalshi and Polymarket, so the capture path is the
+code under test rather than a separate script that can drift from it.
+The committed artifact below predates those adapters and was taken with
+`scripts/capture_xvenue.py`, which remains for reference; the two write
+the same format and the recorder is now the documented path.
 
 - Binance: `btcusdt@bookTicker`, which pushes on every change of either
   side of the touch.
@@ -164,7 +173,7 @@ gunzip -c docs/bench/btc-xvenue.feedlog.gz > /tmp/btc-xvenue.feedlog
 ./scripts/xvenue_report.sh /tmp/btc-xvenue.feedlog   # the sweep table above
 ```
 
-Capture your own with `scripts/capture_xvenue.py` (both sockets, one
-clock). Numbers will differ with the venue's activity and with your own
+Capture your own with `basis record --binance ... --coinbase ...` (both
+sockets, one process, one clock). Numbers will differ with the venue's activity and with your own
 network distance to each venue, which is the point of the bias section
 above.

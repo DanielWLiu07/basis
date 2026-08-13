@@ -114,6 +114,8 @@ if(BASIS_ENABLE_NET)
     Boost::headers OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
   add_library(basis_feed_live
+    feed_live/binance_feed.cpp
+    feed_live/coinbase_feed.cpp
     feed_live/kalshi_feed.cpp
     feed_live/polymarket_feed.cpp
   )
