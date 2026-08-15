@@ -14,6 +14,7 @@ add_executable(basis_tests
   test_polymarket_parser.cpp
   test_feed_log.cpp
   test_contract_registry.cpp
+  test_crypto_instrument.cpp
   test_normalizer.cpp
   test_divergence.cpp
   test_rng.cpp
