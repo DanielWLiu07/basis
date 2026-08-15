@@ -9,6 +9,9 @@ set -euo pipefail
 
 BIN="${BIN:-build/src/basis}"
 CAPTURE="${1:-docs/bench/btc-xvenue.feedlog}"
+# A capture can hold several instruments; each is an independent
+# experiment, so the sweep runs one at a time and says which.
+INSTRUMENT="${2:-${INSTRUMENT:-BTC/USD}}"
 THRESHOLDS="${THRESHOLDS:-25 50 100 200}"
 
 if [[ ! -x "$BIN" ]]; then
@@ -20,10 +23,12 @@ if [[ ! -f "$CAPTURE" ]]; then
   exit 1
 fi
 
+echo "$INSTRUMENT"
+echo
 echo "| Move threshold | Binance moves | answered | Coinbase moves | answered | z | leader |"
 echo "| ---: | ---: | ---: | ---: | ---: | ---: | :--- |"
 for m in $THRESHOLDS; do
-  out=$("$BIN" xvenue-lead "$CAPTURE" --move-cents "$m")
+  out=$("$BIN" xvenue-lead "$CAPTURE" --move-cents "$m" --instrument "$INSTRUMENT")
   bm=$(sed -n 's/.*binance_moves=\([0-9]*\).*/\1/p' <<<"$out")
   ba=$(sed -n 's/.*binance_moves=[0-9]* answered=\([0-9]*\).*/\1/p' <<<"$out")
   br=$(sed -n 's/.*binance_moves=[0-9]* answered=[0-9]* rate=\([0-9.]*\).*/\1/p' <<<"$out")

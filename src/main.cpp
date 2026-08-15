@@ -30,6 +30,7 @@
 #include "core/logger.h"
 #include "core/version.h"
 #include "normalize/contract_registry.h"
+#include "normalize/crypto_instrument.h"
 
 #ifdef BASIS_HAS_BDE
 #include "alloc/bde_arena.h"
@@ -95,9 +96,15 @@ int usage() {
       "      and check it against the venue's own snapshot\n"
       "\n"
       "  basis ingest-bench <capture.feedlog>\n"
-      "  basis xvenue-lead <capture.feedlog> [--grid-ms N] [--max-lag-bins N]\n"
       "      parse + book-apply throughput on a captured venue feed, with\n"
       "      the venue's own message rate alongside it\n"
+      "\n"
+      "  basis xvenue-lead <capture.feedlog> [--grid-ms N] [--max-lag-bins N]\n"
+      "      [--move-cents C] [--follow-ms MS] [--sample-ms MS]\n"
+      "      [--instrument BASE/USD]\n"
+      "      which venue moves first, by cross-correlation and by event\n"
+      "      study, on a capture holding both. One block per instrument\n"
+      "      quoted by both venues; --instrument reports just one\n"
       "\n"
       "  basis fanout-bench [--subscribers N] [--slow K] [--updates M]\n"
       "                     [--slow-us U]\n"
@@ -430,6 +437,10 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   // known mid measures each venue's movement over identical windows.
   // 0 restores per-message sampling.
   std::int64_t sample_ms = 50;
+  // Restricts the report to one canonical instrument. A capture with more
+  // than one in it produces a block per instrument; scripts that want a
+  // single block ask for it by name rather than by grepping the first hit.
+  const std::string instrument_filter(flag_string(args, "--instrument", ""));
   for (std::size_t i = 1; i + 1 < args.size(); i += 2) {
     const auto v = parse_int(args[i + 1]);
     if (!v) continue;
@@ -452,31 +463,44 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
 
   basis::feed::BinanceParser binance;
   basis::feed::CoinbaseParser coinbase;
-  // One book per venue. The capture carries exactly one product per venue;
-  // that is asserted below rather than assumed, because silently averaging
-  // two instruments into one mid would produce a plausible-looking number
-  // out of nonsense.
-  std::array<basis::model::OrderBook, basis::model::kVenueCount> books;
-  std::array<std::string, basis::model::kVenueCount> markets;
-  std::array<std::uint64_t, basis::model::kVenueCount> msgs{};
-  bool mixed_markets = false;
 
   basis::analytics::LeadLagConfig cfg;
   cfg.grid_ns = grid_ms * 1'000'000;
   cfg.max_lag_bins = max_lag_bins;
-  basis::analytics::CrossCorrelationEstimator est(cfg);
+  const basis::analytics::EventStudyConfig evcfg{
+      .move_cents = static_cast<double>(move_cents),
+      .follow_window_ns = follow_ms * 1'000'000};
+
+  // One independent measurement per instrument. A capture with BTC and ETH
+  // in it is two experiments over the same window, not one: the books must
+  // not mix, and neither must the estimators, but the market conditions
+  // they run under are identical, which is what makes the second
+  // instrument a control on the first rather than a separate study.
+  //
   // The cross-correlation estimator resamples onto a fixed grid, so it can
   // never resolve a lead shorter than one bin. The event study works on the
   // raw irregular timestamps instead and answers a different question --
   // whose moves get answered, and how fast -- so it is not bounded by the
   // grid. Running both is the point: they fail in different ways.
-  basis::analytics::EventStudyEstimator ev(
-      {.move_cents = static_cast<double>(move_cents),
-       .follow_window_ns = follow_ms * 1'000'000});
+  struct InstrumentState {
+    InstrumentState(const basis::analytics::LeadLagConfig& c,
+                    const basis::analytics::EventStudyConfig& e)
+        : est(c), ev(e) {}
+    std::array<basis::model::OrderBook, basis::model::kVenueCount> books;
+    std::array<std::string, basis::model::kVenueCount> markets;
+    std::array<std::uint64_t, basis::model::kVenueCount> msgs{};
+    basis::analytics::CrossCorrelationEstimator est;
+    basis::analytics::EventStudyEstimator ev;
+    std::int64_t next_sample_ns = 0;
+    std::uint64_t observations = 0;
+    bool mixed_markets = false;
+  };
+  // Ordered, so the report comes out the same way on every run regardless
+  // of which instrument happened to quote first.
+  std::map<std::string, InstrumentState> instruments;
 
-  std::uint64_t records = 0, malformed = 0, observations = 0;
+  std::uint64_t records = 0, malformed = 0, unpaired = 0;
   std::uint64_t unrepresentable = 0;
-  std::int64_t next_sample_ns = 0;
   std::int64_t first_ns = 0, last_ns = 0;
   while (auto rec = reader.next()) {
     ++records;
@@ -490,79 +514,116 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
     unrepresentable += r.levels_unrepresentable;
     if (r.status == basis::feed::ParseStatus::Malformed) { ++malformed; continue; }
     if (r.status != basis::feed::ParseStatus::Ok) continue;
-    ++msgs[vi];
+    if (r.deltas.empty()) continue;
+
+    // Every delta in one message carries the same market, so the canonical
+    // name is resolved once per message rather than once per level.
+    const auto name = basis::normalize::canonical_instrument(
+        rec->venue, r.deltas.front().market);
+    if (!name) { ++unpaired; continue; }
+    if (!instrument_filter.empty() && *name != instrument_filter) continue;
+
+    auto [it, inserted] = instruments.try_emplace(*name, cfg, evcfg);
+    InstrumentState& st = it->second;
+    ++st.msgs[vi];
     for (const auto& d : r.deltas) {
-      if (markets[vi].empty()) markets[vi] = std::string(d.market);
-      else if (markets[vi] != d.market) mixed_markets = true;
-      books[vi].apply(d);
+      // Two venue symbols can canonicalise to one instrument (btcusdt and
+      // btcusd both mean BTC/USD). Pairing them across venues is the point;
+      // merging them into one book within a venue is not, so it is caught
+      // rather than silently averaged.
+      if (st.markets[vi].empty()) st.markets[vi] = std::string(d.market);
+      else if (st.markets[vi] != d.market) st.mixed_markets = true;
+      st.books[vi].apply(d);
     }
     // Sample whenever either venue moves, but only once both are two-sided;
     // the estimator resamples onto its own grid, so an uneven arrival rate
     // between the venues is handled there rather than by dropping data.
-    const auto a = books[static_cast<std::size_t>(basis::model::Venue::Binance)].mid();
-    const auto b = books[static_cast<std::size_t>(basis::model::Venue::Coinbase)].mid();
+    const auto a = st.books[static_cast<std::size_t>(basis::model::Venue::Binance)].mid();
+    const auto b = st.books[static_cast<std::size_t>(basis::model::Venue::Coinbase)].mid();
     if (a && b) {
       if (sample_ms <= 0) {
-        est.observe(*a, *b, rec->recv_ns);
-        ev.observe(*a, *b, rec->recv_ns);
-        ++observations;
+        st.est.observe(*a, *b, rec->recv_ns);
+        st.ev.observe(*a, *b, rec->recv_ns);
+        ++st.observations;
       } else {
         const std::int64_t step = sample_ms * 1'000'000;
-        if (next_sample_ns == 0) next_sample_ns = rec->recv_ns;
-        while (rec->recv_ns >= next_sample_ns) {
-          est.observe(*a, *b, next_sample_ns);
-          ev.observe(*a, *b, next_sample_ns);
-          ++observations;
-          next_sample_ns += step;
+        if (st.next_sample_ns == 0) st.next_sample_ns = rec->recv_ns;
+        while (rec->recv_ns >= st.next_sample_ns) {
+          st.est.observe(*a, *b, st.next_sample_ns);
+          st.ev.observe(*a, *b, st.next_sample_ns);
+          ++st.observations;
+          st.next_sample_ns += step;
         }
       }
     }
   }
 
-  if (mixed_markets) {
-    basis::log::error("xvenue-lead: a venue quoted more than one product; "
-                      "the mid would mix instruments");
-    return 1;
-  }
   const auto bi = static_cast<std::size_t>(basis::model::Venue::Binance);
   const auto ci = static_cast<std::size_t>(basis::model::Venue::Coinbase);
-  if (msgs[bi] == 0 || msgs[ci] == 0) {
-    basis::log::error("xvenue-lead: capture does not carry both venues");
+  // An instrument only one venue quoted cannot be compared. Drop it with a
+  // count rather than reporting a one-sided result that would read as a
+  // measurement.
+  std::uint64_t single_venue = 0;
+  for (auto it = instruments.begin(); it != instruments.end();) {
+    if (it->second.msgs[bi] == 0 || it->second.msgs[ci] == 0) {
+      ++single_venue;
+      it = instruments.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (instruments.empty()) {
+    basis::log::error("xvenue-lead: no instrument is quoted by both venues");
     return 1;
+  }
+  for (const auto& [name, st] : instruments) {
+    if (st.mixed_markets) {
+      basis::log::error("xvenue-lead: a venue quoted more than one product "
+                        "for " + name + "; the mid would mix instruments");
+      return 1;
+    }
   }
 
   const double span_s = static_cast<double>(last_ns - first_ns) / 1e9;
-  const auto res = est.estimate();
   std::printf("XVENUE span_s=%.1f records=%llu malformed=%llu "
-              "unrepresentable_levels=%llu binance_msgs=%llu "
-              "coinbase_msgs=%llu observations=%llu\n",
+              "unrepresentable_levels=%llu unpaired_msgs=%llu "
+              "single_venue_instruments=%llu instruments=%zu\n",
               span_s, u(records), u(malformed), u(unrepresentable),
-              u(msgs[bi]), u(msgs[ci]), u(observations));
-  std::printf("XVENUE binance_market=%s coinbase_market=%s "
-              "grid_ms=%lld max_lag_bins=%d sample_ms=%lld\n",
-              markets[bi].c_str(), markets[ci].c_str(),
+              u(unpaired), u(single_venue), instruments.size());
+  std::printf("XVENUE grid_ms=%lld max_lag_bins=%d sample_ms=%lld "
+              "event_move_cents=%lld follow_window_ms=%lld\n",
               static_cast<long long>(grid_ms), max_lag_bins,
-              static_cast<long long>(sample_ms));
-  std::printf("XVENUE lead_ms=%.1f corr=%.4f samples=%llu "
-              "ci_low_ms=%.1f ci_high_ms=%.1f resamples=%llu significant=%d\n",
-              res.lead_seconds * 1000.0, res.correlation, u(res.samples),
-              res.ci_low_seconds * 1000.0, res.ci_high_seconds * 1000.0,
-              u(res.resamples), res.lead_is_significant() ? 1 : 0);
-  const auto evr = ev.estimate();
-  std::printf("XVENUE event_move_cents=%lld follow_window_ms=%lld\n",
+              static_cast<long long>(sample_ms),
               static_cast<long long>(move_cents),
               static_cast<long long>(follow_ms));
-  std::printf("XVENUE binance_moves=%llu answered=%llu rate=%.3f "
-              "median_follow_ms=%.1f\n",
-              u(evr.moves), u(evr.followed), evr.forward_follow_rate(),
-              evr.median_follow_seconds * 1000.0);
-  std::printf("XVENUE coinbase_moves=%llu answered=%llu rate=%.3f "
-              "median_follow_ms=%.1f\n",
-              u(evr.reverse_moves), u(evr.reverse_followed),
-              evr.reverse_follow_rate(),
-              evr.reverse_median_follow_seconds * 1000.0);
-  std::printf("XVENUE follow_rate_z=%.2f confirmed_leader=%d\n",
-              evr.follow_rate_z(), evr.confirmed_leader());
+
+  // Every per-instrument line carries instrument=, so a multi-instrument
+  // report stays greppable one instrument at a time.
+  for (const auto& [name, st] : instruments) {
+    const char* n = name.c_str();
+    const auto res = st.est.estimate();
+    const auto evr = st.ev.estimate();
+    std::printf("XVENUE instrument=%s binance_market=%s coinbase_market=%s "
+                "binance_msgs=%llu coinbase_msgs=%llu observations=%llu\n",
+                n, st.markets[bi].c_str(), st.markets[ci].c_str(),
+                u(st.msgs[bi]), u(st.msgs[ci]), u(st.observations));
+    std::printf("XVENUE instrument=%s lead_ms=%.1f corr=%.4f samples=%llu "
+                "ci_low_ms=%.1f ci_high_ms=%.1f resamples=%llu significant=%d\n",
+                n, res.lead_seconds * 1000.0, res.correlation, u(res.samples),
+                res.ci_low_seconds * 1000.0, res.ci_high_seconds * 1000.0,
+                u(res.resamples), res.lead_is_significant() ? 1 : 0);
+    std::printf("XVENUE instrument=%s binance_moves=%llu answered=%llu "
+                "rate=%.3f median_follow_ms=%.1f\n",
+                n, u(evr.moves), u(evr.followed), evr.forward_follow_rate(),
+                evr.median_follow_seconds * 1000.0);
+    std::printf("XVENUE instrument=%s coinbase_moves=%llu answered=%llu "
+                "rate=%.3f median_follow_ms=%.1f\n",
+                n, u(evr.reverse_moves), u(evr.reverse_followed),
+                evr.reverse_follow_rate(),
+                evr.reverse_median_follow_seconds * 1000.0);
+    std::printf("XVENUE instrument=%s follow_rate_z=%.2f confirmed_leader=%d\n",
+                n, evr.follow_rate_z(), evr.confirmed_leader());
+  }
   std::printf("XVENUE note=positive_lead_means_binance_leads_coinbase\n");
   return 0;
 }

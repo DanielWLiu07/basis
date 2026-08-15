@@ -46,6 +46,7 @@ target_link_libraries(basis_feed PUBLIC basis_model simdjson)
 
 add_library(basis_normalize
   normalize/contract_registry.cpp
+  normalize/crypto_instrument.cpp
   normalize/normalizer.cpp
 )
 target_link_libraries(basis_normalize PUBLIC basis_model)
