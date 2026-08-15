@@ -158,20 +158,51 @@ only market data here comes from Kalshi's and Polymarket's public APIs.
 
 ## Layout
 
+One directory per library, and the dependency order below is enforced
+rather than described: `scripts/levelize.py` runs in CI before the build
+and fails on a cycle, on a package dependency that is not declared, or on
+a directory that spans two levels.
+
 ```
-src/core/       logging, clocks, hashing, counting allocator, portable rng
-src/model/      canonical schema: venue, side, order book, unified book
-src/feed/       venue parsers, live feed adapters, feedlog capture format
-src/normalize/  cross-venue contract registry + event router (NO-side fold)
-src/analytics/  divergence, cross-correlation lead-lag, event study
-src/api/        BLPAPI-style subscription interface
-src/bench/      replay harness, latency recorder, synthetic sessions
-src/net/        TLS WebSocket client + Kalshi request signing
-src/alloc/      Bloomberg bdlma arenas behind a std::pmr seam
+level 1  src/core/       logging, clocks, hashing, counting allocator, portable rng
+         src/model/      canonical schema: venue, side, order book, unified book
+         src/alloc/      Bloomberg bdlma arenas behind a std::pmr seam
+
+level 2  src/feed/       venue parsers (Kalshi, Polymarket, Binance, Coinbase),
+                         book sequencer, feedlog capture format
+         src/normalize/  contract registry, event router (NO-side fold),
+                         cross-venue crypto instrument naming
+         src/analytics/  divergence, cross-correlation lead-lag, event study
+         src/api/        BLPAPI-style subscription interface
+         src/exec/       price-time-priority matching engine, order index
+         src/net/        TLS WebSocket client + Kalshi request signing
+
+level 3  src/bench/      replay harness, latency recorder, synthetic sessions,
+                         stats reporting
+         src/feed_live/  WSS adapters per venue (needs net/; BASIS_ENABLE_NET)
+
+level 4  src/cli/        one function per subcommand, grouped by what it
+                         needs: microbenchmarks, capture analysis, live
+                         sockets. The composition root, and the only
+                         package allowed to see everything
+
+         src/main.cpp    29 lines: maps a subcommand name onto a function
+```
+
+`feed/` and `feed_live/` were one directory until `levelize.py` pointed
+out that it spanned two levels: the offline parse path has no business
+pulling in Boost and OpenSSL, and now it does not. `cli/` is the same
+idea applied to `main.cpp`, which had reached 1,400 lines and three times
+the size of any other file here.
+
+```
 tests/          GoogleTest unit and integration tests
+fuzz/           libFuzzer targets + corpus for the parsers and registry
 configs/        contract registries (real + synthetic)
+cmake/          dependency, warning, and sanitizer toolchain fragments
 docs/           design notes, venue API notes, benchmark artifacts
-scripts/        CI performance gate, benchmark runner, README figure generator
+scripts/        CI performance gate, levelization check, benchmark runner,
+                README figure generator
 ```
 
 ## Numbers

@@ -41,6 +41,10 @@ ALLOWED = {
     "alloc": {"core"},
     "net": {"core"},
     "bench": {"core", "model", "feed", "normalize", "analytics", "api", "exec"},
+    # The composition root: it is allowed to see everything, which is what
+    # makes it the only package that may.
+    "cli": {"core", "model", "feed", "feed_live", "normalize", "analytics",
+            "api", "exec", "bench", "alloc", "net"},
 }
 
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.MULTILINE)

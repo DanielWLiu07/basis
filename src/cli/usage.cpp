@@ -1,0 +1,80 @@
+#include "cli/usage.h"
+
+#include <cstdio>
+
+#include "core/version.h"
+
+namespace basis::cli {
+
+int usage() {
+  std::printf(
+      "basis %s - cross-venue prediction-market data engine\n"
+      "\n"
+      "usage:\n"
+      "  basis synth <out.feedlog> [--steps N] [--lead-ms L] [--seed S]\n"
+      "      generate a deterministic synthetic session (real wire formats,\n"
+      "      injected cross-venue lead; ids match configs/synthetic.toml)\n"
+      "\n"
+      "  basis replay <in.feedlog> [--config <contracts.toml>]\n"
+      "               [--alloc heap|count|bde] [--breakdown] [--json]\n"
+      "      replay a capture through parse -> normalize -> analytics -> api\n"
+      "      and report basis, lead-lag, and ingest-to-signal latency\n"
+      "      (default config: configs/synthetic.toml)\n"
+      "      --alloc count reports heap traffic per message; --alloc bde\n"
+      "      runs the hot path on Bloomberg bdlma arenas (needs a build\n"
+      "      with BASIS_ENABLE_BDE); --breakdown splits latency into parse\n"
+      "      vs downstream (a separate profiling run, not the headline);\n"
+      "      --json prints one machine-readable object and nothing else;\n"
+      "      --csv <file> writes the api-layer stream as long-format rows\n"
+      "                   (recv_ns,event_id,field,value) for plotting\n"
+      "      --episodes-csv <file> one row per crossed episode, incl. the\n"
+      "                            surviving sweep at open/50/100/250 ms\n"
+      "\n"
+      "  basis book-verify <capture.feedlog> [--levels N]\n"
+      "      rebuild a book from a venue diff stream through the sequencer\n"
+      "      and check it against the venue's own snapshot\n"
+      "\n"
+      "  basis ingest-bench <capture.feedlog>\n"
+      "      parse + book-apply throughput on a captured venue feed, with\n"
+      "      the venue's own message rate alongside it\n"
+      "\n"
+      "  basis xvenue-lead <capture.feedlog> [--grid-ms N] [--max-lag-bins N]\n"
+      "      [--move-cents C] [--follow-ms MS] [--sample-ms MS]\n"
+      "      [--instrument BASE/USD]\n"
+      "      which venue moves first, by cross-correlation and by event\n"
+      "      study, on a capture holding both. One block per instrument\n"
+      "      quoted by both venues; --instrument reports just one\n"
+      "\n"
+      "  basis fanout-bench [--subscribers N] [--slow K] [--updates M]\n"
+      "                     [--slow-us U]\n"
+      "      subscription fan-out with slow consumers: the same update\n"
+      "      stream through the synchronous session and the conflating one\n"
+      "\n"
+      "  basis lob-bench [--ops N] [--seed S]\n"
+      "      matching-engine microbenchmark: replays one deterministic order\n"
+      "      flow through the price-time-priority book and through a\n"
+      "      std::map baseline, and reports ns/op for both\n"
+#ifdef BASIS_HAS_NET
+      "\n"
+      "  basis record <out.feedlog> [--config <contracts.toml>] [--seconds N]\n"
+      "      [--binance sym,sym] [--coinbase PROD,PROD]  (no credentials needed)\n"
+      "               [--kalshi-key-id ID] [--kalshi-pem <key.pem>]\n"
+      "      capture live feeds for the configured contracts; stop with\n"
+      "      --seconds or ctrl-c (default config: configs/contracts.toml).\n"
+      "      Polymarket needs no credentials. Kalshi joins the capture when\n"
+      "      --kalshi-key-id is given (RSA key from --kalshi-pem, default\n"
+      "      secrets/kalshi.pem, never committed)\n"
+      "\n"
+      "  basis live [--config <contracts.toml>] [--seconds N] [--report N]\n"
+      "             [--kalshi-key-id ID] [--kalshi-pem <key.pem>]\n"
+      "      stream the configured contracts and print per-event basis in\n"
+      "      real time: IO threads feed a bounded queue drained by one\n"
+      "      analytics thread; a final report gives lead-lag and queue\n"
+      "      accounting (same credential rules as record)\n"
+#endif
+      ,
+      basis::kVersion);
+  return 1;
+}
+
+}  // namespace basis::cli
