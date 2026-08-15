@@ -6,15 +6,19 @@
 #   basis_analytics <- basis_model
 #   basis_exec      <- basis_model
 #   basis_api       <- basis_model
-#   basis_bench     <- feed + normalize + analytics + api (composition root)
+#   basis_bench     <- feed + normalize + analytics + api + exec
+#   basis_cli       <- basis_bench (+ basis_feed_live when NET) - the
+#                      composition root: one function per subcommand
 #   basis_net       <- basis_core (+ Boost.Beast, OpenSSL; BASIS_ENABLE_NET)
 #   basis_feed_live <- basis_feed + basis_net (BASIS_ENABLE_NET)
+#   basis (exe)     <- basis_cli; main.cpp is dispatch and nothing else
 #
 # Package directories map one-to-one onto these libraries: feed/ is the
 # offline parse path, feed_live/ the WSS adapters that need net/. They were
 # one directory until scripts/levelize.py pointed out that it spanned two
 # levels, which is the kind of drift a physical-design check exists to catch.
-#   basis (exe)     <- basis_bench (+ basis_feed_live when NET)
+# cli/ is the same idea applied to main.cpp, which had grown to 1,400 lines
+# and three times the size of any other file in the repo.
 
 add_library(basis_core
   core/logger.cpp
@@ -74,8 +78,19 @@ add_library(basis_bench
 target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
   basis_analytics basis_api basis_exec)
 
+# One translation unit per group of subcommands. main.cpp is a dispatcher
+# and nothing else, so the commands can gain includes without every other
+# command paying for them at compile time.
+add_library(basis_cli
+  cli/analysis_commands.cpp
+  cli/args.cpp
+  cli/bench_commands.cpp
+  cli/usage.cpp
+)
+target_link_libraries(basis_cli PUBLIC basis_bench)
+
 add_executable(basis main.cpp)
-target_link_libraries(basis PRIVATE basis_bench)
+target_link_libraries(basis PRIVATE basis_cli)
 
 # Bloomberg bdlma allocators: only with BASIS_ENABLE_BDE. One TU, pinned
 # to C++17 because that is the dialect Homebrew's BDE archives are built
@@ -100,8 +115,8 @@ if(BASIS_ENABLE_BDE)
     target_compile_options(basis_alloc_bde PRIVATE -fsized-deallocation)
   endif()
 
-  target_link_libraries(basis PRIVATE basis_alloc_bde)
-  target_compile_definitions(basis PRIVATE BASIS_HAS_BDE=1)
+  target_link_libraries(basis_cli PUBLIC basis_alloc_bde)
+  target_compile_definitions(basis_cli PUBLIC BASIS_HAS_BDE=1)
 endif()
 
 # Live feeds: only with BASIS_ENABLE_NET, so the default build needs
@@ -122,6 +137,10 @@ if(BASIS_ENABLE_NET)
   )
   target_link_libraries(basis_feed_live PUBLIC basis_feed basis_net)
 
-  target_link_libraries(basis PRIVATE basis_feed_live)
+  # The live subcommands only exist in a NET build, so they join basis_cli
+  # here rather than being compiled out of a file that always builds.
+  target_sources(basis_cli PRIVATE cli/live_commands.cpp)
+  target_link_libraries(basis_cli PUBLIC basis_feed_live)
+  target_compile_definitions(basis_cli PUBLIC BASIS_HAS_NET=1)
   target_compile_definitions(basis PRIVATE BASIS_HAS_NET=1)
 endif()
