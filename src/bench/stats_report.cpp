@@ -260,6 +260,222 @@ void print_stats_json(const ReplayStats& stats,
   std::printf("%s]\n}\n", stats.events.empty() ? "" : "\n  ");
 }
 
+// One event's full report: the basis distribution, the crossed
+// episodes and their economics, quote staleness, and the microprice
+// and queue-position detail. Pulled out of print_stats because it was
+// two thirds of a three-hundred-line function, and it is the part a
+// reader is usually looking for.
+void print_event(const ReplayStats::EventReport& event) {
+  std::printf("\nevent %s\n", event.event_id.c_str());
+  if (event.basis_samples == 0) {
+    std::printf("  basis    no overlap (one venue never had a "
+                "two-sided book)\n");
+    return;
+  }
+  std::printf("  basis    mean %+.2fc  sd %.2fc  min %+.2fc  max %+.2fc  "
+              "last %+.2fc  (%llu samples)\n",
+              event.basis_mean, event.basis_stddev, event.basis_min,
+              event.basis_max, event.basis_last,
+              u(event.basis_samples));
+  if (event.basis_stddev > 0.0) {
+    // How far the latest basis sits from the session mean, in standard
+    // deviations: a quick read on whether the cross-venue gap is
+    // currently at a typical or an unusual level.
+    std::printf("           last is %+.1f sd from the session mean\n",
+                event.basis_zscore);
+  }
+  // AR(1) mean reversion: how sticky the basis is and, when it reverts,
+  // how many updates it takes to close half the gap back to the mean.
+  if (event.basis_halflife_updates > 0.0) {
+    std::printf("           mean-reverting (ar1 %.3f), half-life %.1f "
+                "updates\n",
+                event.basis_ar1, event.basis_halflife_updates);
+  } else if (event.basis_samples >= 3) {
+    std::printf("           not mean-reverting (ar1 %.3f)\n",
+                event.basis_ar1);
+  }
+  // Freshness: how much of the basis series was priced against a quote
+  // the other venue had not refreshed in over 5 seconds. High numbers
+  // mean the "gap" is mostly one side not quoting, not a live signal.
+  if (event.stale_basis_samples > 0) {
+    const double pct = 100.0 * static_cast<double>(event.stale_basis_samples) /
+                       static_cast<double>(event.basis_samples);
+    std::printf("           %llu samples (%.1f%%) priced on a >5s-old quote, "
+                "stalest %.1fs\n",
+                u(event.stale_basis_samples),
+                pct, event.stalest_quote_seconds);
+  }
+  // Bid-ask spread per venue, and whether the basis actually clears it: a
+  // mid gap smaller than the cost of crossing both books is quoting noise,
+  // not a tradeable dislocation.
+  if (event.kalshi_spread_mean >= 0.0 && event.poly_spread_mean >= 0.0) {
+    const double avg_spread =
+        (event.kalshi_spread_mean + event.poly_spread_mean) / 2.0;
+    std::printf("  spread   kalshi %.2fc  polymarket %.2fc  -- %s\n",
+                event.kalshi_spread_mean, event.poly_spread_mean,
+                std::abs(event.basis_mean) > avg_spread
+                    ? "basis clears the spread (dislocation)"
+                    : "basis within the spread (noise)");
+  }
+  // Crossable dislocations: updates where the books were actually crossed
+  // across venues (best bid > best ask), an arbitrage the mid-based basis
+  // does not by itself reveal.
+  if (event.two_sided_updates > 0) {
+    const double pct = 100.0 * static_cast<double>(event.crossable_updates) /
+                       static_cast<double>(event.two_sided_updates);
+    std::printf("  arb      %llu/%llu two-sided updates crossable (%.2f%%)\n",
+                u(event.crossable_updates),
+                u(event.two_sided_updates), pct);
+    // Persistence: how long the books stay crossed once they cross. The
+    // longest run is the widest window an execution engine had to act.
+    if (event.crossable_episodes > 0) {
+      std::printf("           %llu crossed episode%s, longest held %.1f ms, "
+                  "depth mean %.1fc max %.0fc\n",
+                  u(event.crossable_episodes),
+                  event.crossable_episodes == 1 ? "" : "s",
+                  static_cast<double>(event.crossable_longest_ns) / 1e6,
+                  event.crossable_depth_mean, event.crossable_depth_max);
+      // Depth times the smaller touch size: what one taker order could
+      // actually capture, not just how far the mids disagreed.
+      std::printf("           edge at the touch mean $%.2f  max $%.2f "
+                  "per crossed update\n",
+                  event.crossable_edge_mean_dollars,
+                  event.crossable_edge_max_dollars);
+      // The touch is one taker order at the best levels; the sweep walks
+      // the whole crossed depth. Equal numbers mean the cross never ran
+      // deeper than the top of book.
+      std::printf("           full-depth sweep mean $%.2f  max $%.2f "
+                  "per crossed update\n",
+                  event.crossable_sweep_mean_dollars,
+                  event.crossable_sweep_max_dollars);
+      // Fees decide whether any of it was real: the Kalshi leg pays the
+      // taker fee (general schedule), the Polymarket leg is free.
+      std::printf("           net of Kalshi taker fees mean $%+.2f  "
+                  "max $%+.2f -- %llu/%llu crossed updates profitable\n",
+                  event.crossable_net_edge_mean_dollars,
+                  event.crossable_net_edge_max_dollars,
+                  u(
+                      event.crossable_profitable_updates),
+                  u(event.crossable_updates));
+      // The executable answer: of the whole crossed depth, only the
+      // fills that clear their own fee. What the gross sweep promised
+      // versus what a fee-aware taker keeps.
+      std::printf("           fee-aware optimal sweep mean $%.2f  "
+                  "max $%.2f -- %llu/%llu crossed updates worth taking\n",
+                  event.crossable_net_sweep_mean_dollars,
+                  event.crossable_net_sweep_max_dollars,
+                  u(
+                      event.crossable_sweepable_updates),
+                  u(event.crossable_updates));
+      // Complementary YES/NO no-arbitrage: riskless if it ever holds,
+      // and the size of it decides whether it is tradeable or noise.
+      if (event.internal_cross_updates > 0) {
+        std::printf("           complementary arb: %llu/%llu updates had "
+                    "YES_bid + NO_bid > $1.00, by %.1fc mean / %.0fc max\n",
+                    u(event.internal_cross_updates),
+                    u(event.internal_two_sided_updates),
+                    event.internal_cross_mean_cents,
+                    event.internal_cross_max_cents);
+      }
+      // Size-weighted view: where the microprice sits relative to the
+      // mid the basis is built on, and how lopsided each queue is.
+      if (event.micro_basis_samples > 0) {
+        std::printf("           microprice: kalshi imbalance %+.2f "
+                    "(micro-mid %+.2fc), poly imbalance %+.2f "
+                    "(micro-mid %+.2fc), micro basis %+.2fc vs mid basis "
+                    "%+.2fc\n",
+                    event.kalshi_imbalance_mean,
+                    event.kalshi_micro_minus_mid_mean,
+                    event.poly_imbalance_mean,
+                    event.poly_micro_minus_mid_mean,
+                    event.micro_basis_mean, event.basis_mean);
+      }
+      // The time dimension of the same answer: what is still standing
+      // for a taker who needs 50/100/250 ms to react after an episode
+      // opens. Means are over all episodes, expired ones counting zero,
+      // so each figure is the expected edge at that reaction delay.
+      std::printf("           surviving a reaction delay: open $%.2f, "
+                  "50ms $%.2f (%llu/%llu eps), 100ms $%.2f (%llu/%llu), "
+                  "250ms $%.2f (%llu/%llu)\n",
+                  event.episode_net_sweep_after_mean_dollars[0],
+                  event.episode_net_sweep_after_mean_dollars[1],
+                  u(event.episodes_alive_after[1]),
+                  u(event.crossable_episodes),
+                  event.episode_net_sweep_after_mean_dollars[2],
+                  u(event.episodes_alive_after[2]),
+                  u(event.crossable_episodes),
+                  event.episode_net_sweep_after_mean_dollars[3],
+                  u(event.episodes_alive_after[3]),
+                  u(event.crossable_episodes));
+    }
+  }
+  const auto& ll = event.lead_lag;
+  if (ll.correlation <= 0.0) {
+    std::printf("  lead-lag no signal (flat or too little overlap)\n");
+  } else {
+    const char* leader = ll.lead_seconds >= 0 ? "kalshi" : "polymarket";
+    std::printf("  lead-lag %s leads by %.3fs  "
+                "(corr %.2f over %llu samples)\n",
+                leader,
+                ll.lead_seconds >= 0 ? ll.lead_seconds : -ll.lead_seconds,
+                ll.correlation,
+                u(ll.samples));
+    if (ll.resamples > 0) {
+      std::printf("           95%% ci %.3fs..%.3fs "
+                  "(%llu block-bootstrap resamples) -- %s\n",
+                  ll.ci_low_seconds, ll.ci_high_seconds,
+                  u(ll.resamples),
+                  ll.lead_is_significant()
+                      ? "significant (interval excludes zero)"
+                      : "not significant (interval spans zero)");
+    }
+  }
+  const auto& es = event.event_study;
+  if (es.moves > 0 || es.reverse_moves > 0) {
+    std::printf("  events   kalshi moves: %llu/%llu followed by "
+                "polymarket, median %.3fs  |  reverse: %llu/%llu, "
+                "median %.3fs\n",
+                u(es.followed),
+                u(es.moves),
+                es.median_follow_seconds,
+                u(es.reverse_followed),
+                u(es.reverse_moves),
+                es.reverse_median_follow_seconds);
+    // Turn the four counts into a verdict: does one venue's moves get
+    // answered significantly more than the other's?
+    if (es.moves > 0 && es.reverse_moves > 0) {
+      std::printf("           follow rate %.0f%% vs %.0f%% reverse "
+                  "(z %+.1f) -- %s\n",
+                  es.forward_follow_rate() * 100.0,
+                  es.reverse_follow_rate() * 100.0, es.follow_rate_z(),
+                  es.lead_confirmed()
+                      ? "confirms a lead"
+                      : "no confirmed lead");
+    }
+  }
+  // The payoff of the two-method design: do cross-correlation and the
+  // event study agree on which venue leads? Agreement is the defensible
+  // finding; a conflict means the apparent lead is method-dependent.
+  const auto consensus =
+      basis::analytics::lead_consensus(ll, es);
+  const auto leader_name = [](basis::analytics::Leader l) {
+    switch (l) {
+      case basis::analytics::Leader::A: return "kalshi";
+      case basis::analytics::Leader::B: return "polymarket";
+      default: return "neither";
+    }
+  };
+  if (consensus.agree()) {
+    std::printf("  consensus both methods agree: %s leads\n",
+                leader_name(consensus.leader()));
+  } else if (consensus.conflict()) {
+    std::printf("  consensus methods disagree (cross-corr %s, event study "
+                "%s) -- no reliable lead\n",
+                leader_name(consensus.crosscorr),
+                leader_name(consensus.event_study));
+  }
+}
+
 void print_stats(const ReplayStats& stats) {
   std::printf("records   %llu (kalshi %llu, polymarket %llu)\n",
               u(stats.records),
@@ -328,214 +544,7 @@ void print_stats(const ReplayStats& stats) {
   }
 
   for (const auto& event : stats.events) {
-    std::printf("\nevent %s\n", event.event_id.c_str());
-    if (event.basis_samples == 0) {
-      std::printf("  basis    no overlap (one venue never had a "
-                  "two-sided book)\n");
-      continue;
-    }
-    std::printf("  basis    mean %+.2fc  sd %.2fc  min %+.2fc  max %+.2fc  "
-                "last %+.2fc  (%llu samples)\n",
-                event.basis_mean, event.basis_stddev, event.basis_min,
-                event.basis_max, event.basis_last,
-                u(event.basis_samples));
-    if (event.basis_stddev > 0.0) {
-      // How far the latest basis sits from the session mean, in standard
-      // deviations: a quick read on whether the cross-venue gap is
-      // currently at a typical or an unusual level.
-      std::printf("           last is %+.1f sd from the session mean\n",
-                  event.basis_zscore);
-    }
-    // AR(1) mean reversion: how sticky the basis is and, when it reverts,
-    // how many updates it takes to close half the gap back to the mean.
-    if (event.basis_halflife_updates > 0.0) {
-      std::printf("           mean-reverting (ar1 %.3f), half-life %.1f "
-                  "updates\n",
-                  event.basis_ar1, event.basis_halflife_updates);
-    } else if (event.basis_samples >= 3) {
-      std::printf("           not mean-reverting (ar1 %.3f)\n",
-                  event.basis_ar1);
-    }
-    // Freshness: how much of the basis series was priced against a quote
-    // the other venue had not refreshed in over 5 seconds. High numbers
-    // mean the "gap" is mostly one side not quoting, not a live signal.
-    if (event.stale_basis_samples > 0) {
-      const double pct = 100.0 * static_cast<double>(event.stale_basis_samples) /
-                         static_cast<double>(event.basis_samples);
-      std::printf("           %llu samples (%.1f%%) priced on a >5s-old quote, "
-                  "stalest %.1fs\n",
-                  u(event.stale_basis_samples),
-                  pct, event.stalest_quote_seconds);
-    }
-    // Bid-ask spread per venue, and whether the basis actually clears it: a
-    // mid gap smaller than the cost of crossing both books is quoting noise,
-    // not a tradeable dislocation.
-    if (event.kalshi_spread_mean >= 0.0 && event.poly_spread_mean >= 0.0) {
-      const double avg_spread =
-          (event.kalshi_spread_mean + event.poly_spread_mean) / 2.0;
-      std::printf("  spread   kalshi %.2fc  polymarket %.2fc  -- %s\n",
-                  event.kalshi_spread_mean, event.poly_spread_mean,
-                  std::abs(event.basis_mean) > avg_spread
-                      ? "basis clears the spread (dislocation)"
-                      : "basis within the spread (noise)");
-    }
-    // Crossable dislocations: updates where the books were actually crossed
-    // across venues (best bid > best ask), an arbitrage the mid-based basis
-    // does not by itself reveal.
-    if (event.two_sided_updates > 0) {
-      const double pct = 100.0 * static_cast<double>(event.crossable_updates) /
-                         static_cast<double>(event.two_sided_updates);
-      std::printf("  arb      %llu/%llu two-sided updates crossable (%.2f%%)\n",
-                  u(event.crossable_updates),
-                  u(event.two_sided_updates), pct);
-      // Persistence: how long the books stay crossed once they cross. The
-      // longest run is the widest window an execution engine had to act.
-      if (event.crossable_episodes > 0) {
-        std::printf("           %llu crossed episode%s, longest held %.1f ms, "
-                    "depth mean %.1fc max %.0fc\n",
-                    u(event.crossable_episodes),
-                    event.crossable_episodes == 1 ? "" : "s",
-                    static_cast<double>(event.crossable_longest_ns) / 1e6,
-                    event.crossable_depth_mean, event.crossable_depth_max);
-        // Depth times the smaller touch size: what one taker order could
-        // actually capture, not just how far the mids disagreed.
-        std::printf("           edge at the touch mean $%.2f  max $%.2f "
-                    "per crossed update\n",
-                    event.crossable_edge_mean_dollars,
-                    event.crossable_edge_max_dollars);
-        // The touch is one taker order at the best levels; the sweep walks
-        // the whole crossed depth. Equal numbers mean the cross never ran
-        // deeper than the top of book.
-        std::printf("           full-depth sweep mean $%.2f  max $%.2f "
-                    "per crossed update\n",
-                    event.crossable_sweep_mean_dollars,
-                    event.crossable_sweep_max_dollars);
-        // Fees decide whether any of it was real: the Kalshi leg pays the
-        // taker fee (general schedule), the Polymarket leg is free.
-        std::printf("           net of Kalshi taker fees mean $%+.2f  "
-                    "max $%+.2f -- %llu/%llu crossed updates profitable\n",
-                    event.crossable_net_edge_mean_dollars,
-                    event.crossable_net_edge_max_dollars,
-                    u(
-                        event.crossable_profitable_updates),
-                    u(event.crossable_updates));
-        // The executable answer: of the whole crossed depth, only the
-        // fills that clear their own fee. What the gross sweep promised
-        // versus what a fee-aware taker keeps.
-        std::printf("           fee-aware optimal sweep mean $%.2f  "
-                    "max $%.2f -- %llu/%llu crossed updates worth taking\n",
-                    event.crossable_net_sweep_mean_dollars,
-                    event.crossable_net_sweep_max_dollars,
-                    u(
-                        event.crossable_sweepable_updates),
-                    u(event.crossable_updates));
-        // Complementary YES/NO no-arbitrage: riskless if it ever holds,
-        // and the size of it decides whether it is tradeable or noise.
-        if (event.internal_cross_updates > 0) {
-          std::printf("           complementary arb: %llu/%llu updates had "
-                      "YES_bid + NO_bid > $1.00, by %.1fc mean / %.0fc max\n",
-                      u(event.internal_cross_updates),
-                      u(event.internal_two_sided_updates),
-                      event.internal_cross_mean_cents,
-                      event.internal_cross_max_cents);
-        }
-        // Size-weighted view: where the microprice sits relative to the
-        // mid the basis is built on, and how lopsided each queue is.
-        if (event.micro_basis_samples > 0) {
-          std::printf("           microprice: kalshi imbalance %+.2f "
-                      "(micro-mid %+.2fc), poly imbalance %+.2f "
-                      "(micro-mid %+.2fc), micro basis %+.2fc vs mid basis "
-                      "%+.2fc\n",
-                      event.kalshi_imbalance_mean,
-                      event.kalshi_micro_minus_mid_mean,
-                      event.poly_imbalance_mean,
-                      event.poly_micro_minus_mid_mean,
-                      event.micro_basis_mean, event.basis_mean);
-        }
-        // The time dimension of the same answer: what is still standing
-        // for a taker who needs 50/100/250 ms to react after an episode
-        // opens. Means are over all episodes, expired ones counting zero,
-        // so each figure is the expected edge at that reaction delay.
-        std::printf("           surviving a reaction delay: open $%.2f, "
-                    "50ms $%.2f (%llu/%llu eps), 100ms $%.2f (%llu/%llu), "
-                    "250ms $%.2f (%llu/%llu)\n",
-                    event.episode_net_sweep_after_mean_dollars[0],
-                    event.episode_net_sweep_after_mean_dollars[1],
-                    u(event.episodes_alive_after[1]),
-                    u(event.crossable_episodes),
-                    event.episode_net_sweep_after_mean_dollars[2],
-                    u(event.episodes_alive_after[2]),
-                    u(event.crossable_episodes),
-                    event.episode_net_sweep_after_mean_dollars[3],
-                    u(event.episodes_alive_after[3]),
-                    u(event.crossable_episodes));
-      }
-    }
-    const auto& ll = event.lead_lag;
-    if (ll.correlation <= 0.0) {
-      std::printf("  lead-lag no signal (flat or too little overlap)\n");
-    } else {
-      const char* leader = ll.lead_seconds >= 0 ? "kalshi" : "polymarket";
-      std::printf("  lead-lag %s leads by %.3fs  "
-                  "(corr %.2f over %llu samples)\n",
-                  leader,
-                  ll.lead_seconds >= 0 ? ll.lead_seconds : -ll.lead_seconds,
-                  ll.correlation,
-                  u(ll.samples));
-      if (ll.resamples > 0) {
-        std::printf("           95%% ci %.3fs..%.3fs "
-                    "(%llu block-bootstrap resamples) -- %s\n",
-                    ll.ci_low_seconds, ll.ci_high_seconds,
-                    u(ll.resamples),
-                    ll.lead_is_significant()
-                        ? "significant (interval excludes zero)"
-                        : "not significant (interval spans zero)");
-      }
-    }
-    const auto& es = event.event_study;
-    if (es.moves > 0 || es.reverse_moves > 0) {
-      std::printf("  events   kalshi moves: %llu/%llu followed by "
-                  "polymarket, median %.3fs  |  reverse: %llu/%llu, "
-                  "median %.3fs\n",
-                  u(es.followed),
-                  u(es.moves),
-                  es.median_follow_seconds,
-                  u(es.reverse_followed),
-                  u(es.reverse_moves),
-                  es.reverse_median_follow_seconds);
-      // Turn the four counts into a verdict: does one venue's moves get
-      // answered significantly more than the other's?
-      if (es.moves > 0 && es.reverse_moves > 0) {
-        std::printf("           follow rate %.0f%% vs %.0f%% reverse "
-                    "(z %+.1f) -- %s\n",
-                    es.forward_follow_rate() * 100.0,
-                    es.reverse_follow_rate() * 100.0, es.follow_rate_z(),
-                    es.lead_confirmed()
-                        ? "confirms a lead"
-                        : "no confirmed lead");
-      }
-    }
-    // The payoff of the two-method design: do cross-correlation and the
-    // event study agree on which venue leads? Agreement is the defensible
-    // finding; a conflict means the apparent lead is method-dependent.
-    const auto consensus =
-        basis::analytics::lead_consensus(ll, es);
-    const auto leader_name = [](basis::analytics::Leader l) {
-      switch (l) {
-        case basis::analytics::Leader::A: return "kalshi";
-        case basis::analytics::Leader::B: return "polymarket";
-        default: return "neither";
-      }
-    };
-    if (consensus.agree()) {
-      std::printf("  consensus both methods agree: %s leads\n",
-                  leader_name(consensus.leader()));
-    } else if (consensus.conflict()) {
-      std::printf("  consensus methods disagree (cross-corr %s, event study "
-                  "%s) -- no reliable lead\n",
-                  leader_name(consensus.crosscorr),
-                  leader_name(consensus.event_study));
-    }
+    print_event(event);
   }
 
   // Session rollup: with one synthetic event this is a sanity echo; on a
