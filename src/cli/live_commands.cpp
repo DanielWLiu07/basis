@@ -225,31 +225,40 @@ int run_record(const std::vector<std::string_view>& args) {
               u(written.load()),
               out_path.c_str(),
               u(rejected.load()));
+  // stalls are reported alongside reconnects because they mean something
+  // a reconnect count alone hides: the connection never failed, it went
+  // quiet, and only the idle watchdog noticed. A capture with a nonzero
+  // stall count has a gap in it even though nothing errored.
   if (poly_feed) {
-    std::printf("  polymarket: %llu malformed, %llu reconnects, "
-                "%llu hashes verified, %llu mismatched\n",
+    std::printf("  polymarket: %llu malformed, %llu reconnects "
+                "(%llu stalls), %llu hashes verified, %llu mismatched\n",
                 u(poly_feed->malformed()),
                 u(poly_feed->reconnects()),
+                u(poly_feed->stalls()),
                 u(poly_feed->hashes_verified()),
                 u(poly_feed->hashes_mismatched()));
   }
   if (binance_feed) {
-    std::printf("  binance: %llu malformed, %llu reconnects\n",
+    std::printf("  binance: %llu malformed, %llu reconnects (%llu stalls)\n",
                 u(binance_feed->malformed()),
-                u(binance_feed->reconnects()));
+                u(binance_feed->reconnects()),
+                u(binance_feed->stalls()));
   }
   if (coinbase_feed) {
-    std::printf("  coinbase: %llu malformed, %llu reconnects, "
+    std::printf("  coinbase: %llu malformed, %llu reconnects (%llu stalls), "
                 "%llu levels unrepresentable\n",
                 u(coinbase_feed->malformed()),
                 u(coinbase_feed->reconnects()),
+                u(coinbase_feed->stalls()),
                 u(coinbase_feed->unrepresentable()));
   }
   if (kalshi_feed) {
-    std::printf("  kalshi: %llu malformed, %llu gaps, %llu reconnects\n",
+    std::printf("  kalshi: %llu malformed, %llu gaps, %llu reconnects "
+                "(%llu stalls)\n",
                 u(kalshi_feed->malformed()),
                 u(kalshi_feed->gaps()),
-                u(kalshi_feed->reconnects()));
+                u(kalshi_feed->reconnects()),
+                u(kalshi_feed->stalls()));
   }
   std::printf("replay it:  basis replay %s --config %s\n", out_path.c_str(),
               config_path.c_str());

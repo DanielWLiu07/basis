@@ -156,6 +156,16 @@ void FlakyWsServer::run() {
         ws.write(asio::buffer(json));
       }
 
+      if (config_.stall_ms > 0) {
+        // Deliberately no write and no close: just silence on an open
+        // socket. Polls running_ so stop() is never blocked behind it.
+        const auto until = std::chrono::steady_clock::now() +
+                           std::chrono::milliseconds(config_.stall_ms);
+        while (running_.load() && std::chrono::steady_clock::now() < until) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+      }
+
       if (c + 1 < config_.connections) {
         // The injected fault: a hard TCP close mid-subscription, no
         // WebSocket close frame, exactly what a dying LB looks like.
