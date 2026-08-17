@@ -133,4 +133,62 @@ TEST(Reconnect, RejectsAnUntrustedCertificate) {
   EXPECT_EQ(feed.messages(), 0u);
 }
 
+
+// The fault the reconnect path above cannot see.
+//
+// Every recovery in this file so far is driven by a read error: the server
+// hard-closes and the client's blocking read fails. A network that goes
+// away without closing anything - a half-open connection, a middlebox that
+// forgets the flow - produces no error at all. The read parks forever and
+// the client reports perfect health while receiving nothing.
+//
+// That is not hypothetical. A 45 minute two-venue capture had Coinbase go
+// silent 19 minutes in and stay silent for the remaining 25, with zero
+// reconnects logged, while Binance recovered twice across the same outage
+// because its server actually closes connections.
+//
+// Here the server sends its deltas and then simply stops talking, holding
+// the socket open. Only the idle watchdog can end that.
+TEST(Reconnect, IdleWatchdogBreaksASilentButOpenConnection) {
+  const auto identity = basis::testing::make_self_signed_identity();
+  basis::testing::FlakyWsServer server(
+      {.connections = 2,
+       .deltas_per_connection = 2,
+       .asset_id = "1000001",
+       .stall_ms = 1500},
+      identity);
+  server.start();
+
+  basis::feed::PolymarketFeed feed(
+      {.token_ids = {"1000001"},
+       .host = "127.0.0.1",
+       .port = std::to_string(server.port()),
+       .trusted_ca_pem = identity.cert_pem,
+       .initial_backoff_ms = 25,
+       // Far below the server's 1500ms silence, so the watchdog must fire
+       // during the first stall rather than after the server gives up.
+       .idle_timeout_ms = 300});
+  feed.start();
+
+  // Poll for the forced reconnect instead of sleeping a fixed guess.
+  // Both counters, not just stalls: the watchdog increments stalls the
+  // moment it breaks the socket, but reconnects only rises once the new
+  // connection is up, so waiting on stalls alone races the recovery.
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while ((feed.stalls() == 0 || feed.reconnects() == 0) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(10ms);
+  }
+  const auto stalls = feed.stalls();
+  const auto reconnects = feed.reconnects();
+  feed.stop();
+  server.stop();
+
+  // The watchdog noticed the silence and forced the reconnect that a
+  // read error never would have. Before it existed this was 0 and the
+  // client sat on a dead socket until the process ended.
+  EXPECT_GE(stalls, 1u);
+  EXPECT_GE(reconnects, 1u);
+}
+
 }  // namespace

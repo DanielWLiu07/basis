@@ -28,6 +28,9 @@ class PolymarketFeed final : public FeedAdapter {
     // the same feed stack at a local server.
     std::string trusted_ca_pem;
     std::int64_t initial_backoff_ms = 500;
+    // Forwarded to WsClient; see net/ws_client.h for why a read-error
+    // driven reconnect is not enough on its own.
+    std::int64_t idle_timeout_ms = 30'000;
   };
 
   // Raw tap for the record tool: every wire message verbatim, before
@@ -47,6 +50,10 @@ class PolymarketFeed final : public FeedAdapter {
   std::uint64_t messages() const { return client_.messages(); }
   std::uint64_t bytes() const { return client_.bytes(); }
   std::uint64_t reconnects() const { return client_.reconnects(); }
+  // Reconnects the idle watchdog had to force because the connection went
+  // quiet without failing. Distinct from reconnects(): a stall is a fault
+  // that reports itself as perfect health.
+  std::uint64_t stalls() const { return client_.stalls(); }
   std::uint64_t malformed() const { return malformed_.load(); }
   std::uint64_t deltas() const { return deltas_.load(); }
   std::uint64_t hashes_verified() const { return hashes_verified_.load(); }

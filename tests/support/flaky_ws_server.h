@@ -27,6 +27,12 @@ class FlakyWsServer {
     int connections = 5;           // accepts before the script finishes
     int deltas_per_connection = 20;
     std::string asset_id = "1000001";
+    // After the scripted deltas, hold the connection open and send
+    // nothing at all. This is the fault a reconnect driven by read errors
+    // cannot see - the socket is fine, the venue has simply stopped
+    // talking - so it is the client's idle watchdog that has to catch it.
+    // 0 disables the stall and the connection closes as before.
+    int stall_ms = 0;
   };
 
   FlakyWsServer(Config config, TlsIdentity identity);

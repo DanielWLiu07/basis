@@ -47,6 +47,10 @@ class KalshiFeed final : public FeedAdapter {
   std::uint64_t messages() const { return client_.messages(); }
   std::uint64_t bytes() const { return client_.bytes(); }
   std::uint64_t reconnects() const { return client_.reconnects(); }
+  // Reconnects the idle watchdog had to force because the connection went
+  // quiet without failing. Distinct from reconnects(): a stall is a fault
+  // that reports itself as perfect health.
+  std::uint64_t stalls() const { return client_.stalls(); }
   std::uint64_t malformed() const { return malformed_.load(); }
   std::uint64_t deltas() const { return deltas_.load(); }
   std::uint64_t gaps() const { return gaps_.load(); }

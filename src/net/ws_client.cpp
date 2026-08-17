@@ -53,27 +53,74 @@ void WsClient::set_header_provider(HeaderProvider provider) {
 void WsClient::start() {
   if (running_.exchange(true)) return;
   io_thread_ = std::thread([this] { run(); });
+  if (config_.idle_timeout_ms > 0 || config_.connect_timeout_ms > 0) {
+    watchdog_thread_ = std::thread([this] { watchdog(); });
+  }
+}
+
+// Breaks a read that has gone quiet, so the run loop's reconnect path gets
+// a chance to run. Uses the same socket shutdown stop() uses, and for the
+// same reason: it is the documented way to wake a thread blocked in recv,
+// and it leaves closing the fd to the IO thread that owns it.
+//
+// The difference from stop() is that running_ stays true, so the run loop
+// treats it as a failed connection and reconnects rather than exiting.
+void WsClient::watchdog() {
+  while (running_.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    if (!running_.load()) break;
+    const std::int64_t last = last_activity_ns_.load();
+    if (last == 0) continue;  // between connections
+
+    const std::lock_guard<std::mutex> lock(conn_mutex_);
+    // Which budget applies depends on the phase: a connection that has not
+    // finished its handshakes is being timed for establishment, an
+    // established one for silence.
+    const bool established = conn_ != nullptr;
+    if (!established && connecting_ == nullptr) continue;
+    const std::int64_t budget_ms = established ? config_.idle_timeout_ms
+                                               : config_.connect_timeout_ms;
+    if (budget_ms <= 0) continue;
+    const auto timeout_ns = budget_ms * 1'000'000;
+    // Re-check under the lock: the IO thread may have read a frame
+    // between the test above and acquiring this.
+    if (time::wall_ns() - last_activity_ns_.load() < timeout_ns) continue;
+    log::warn("ws " + config_.host + ": " +
+              (established ? "no data for " : "handshake stalled ") +
+              std::to_string(budget_ms) + "ms; forcing reconnect");
+    stalls_.fetch_add(1);
+    // Stop the watchdog re-firing on the same silence while the run loop
+    // works through its backoff.
+    last_activity_ns_.store(time::wall_ns());
+    shutdown_active_locked();
+  }
+}
+
+// shutdown() from another thread is the documented way to wake a socket
+// blocked in recv or in a handshake; the IO thread then sees the error and
+// destroys the connection (which closes the socket) itself. Deliberately
+// not close() here: closing the fd from this thread while the IO thread is
+// mid-call races on the fd.
+void WsClient::shutdown_active_locked() {
+  Connection* target = conn_ != nullptr ? conn_ : connecting_;
+  if (target == nullptr) return;
+  boost::system::error_code ec;
+  target->ws.next_layer().next_layer().shutdown(tcp::socket::shutdown_both, ec);
 }
 
 void WsClient::stop() {
   if (!running_.exchange(false)) {
     if (io_thread_.joinable()) io_thread_.join();
+    if (watchdog_thread_.joinable()) watchdog_thread_.join();
     return;
   }
   {
-    // Break a blocked read: shutdown() from another thread is the
-    // documented way to wake a socket blocked in recv, and the IO thread
-    // then sees the error and destroys the connection (which closes the
-    // socket) itself. Deliberately not close() here: closing the fd from
-    // this thread while the IO thread is mid-read races on the fd.
+    // Breaks a blocked read, and also a handshake that never completes.
     const std::lock_guard<std::mutex> lock(conn_mutex_);
-    if (conn_ != nullptr) {
-      boost::system::error_code ec;
-      conn_->ws.next_layer().next_layer().shutdown(tcp::socket::shutdown_both,
-                                                   ec);
-    }
+    shutdown_active_locked();
   }
   if (io_thread_.joinable()) io_thread_.join();
+  if (watchdog_thread_.joinable()) watchdog_thread_.join();
 }
 
 bool WsClient::send(const std::string& text) {
@@ -130,6 +177,14 @@ void WsClient::run() {
     if (!ec) {
       asio::connect(conn->ws.next_layer().next_layer(), endpoints, ec);
     }
+    if (!ec) {
+      const std::lock_guard<std::mutex> lock(conn_mutex_);
+      connecting_ = conn.get();
+      // Start the idle clock here rather than after the handshakes: a
+      // handshake that never finishes is exactly the silence the watchdog
+      // exists to break.
+      last_activity_ns_.store(time::wall_ns());
+    }
 
     // TLS handshake (SNI first, or the venue rejects the hello).
     if (!ec) {
@@ -142,8 +197,14 @@ void WsClient::run() {
     }
     if (!ec) conn->ws.next_layer().handshake(ssl::stream_base::client, ec);
 
-    // WebSocket handshake. Built-in keep-alive pings hold idle
-    // subscriptions open without a hand-rolled heartbeat.
+    // WebSocket handshake.
+    //
+    // These timeout options are set for the handshake, which is the part
+    // of this client that does use them. They do NOT protect the read
+    // loop: Beast applies stream_base::timeout to asynchronous operations
+    // only, and the loop below reads synchronously. keep_alive_pings is
+    // also inert while idle_timeout is `none`, the client-role default.
+    // A stalled connection is caught by WsClient::watchdog instead.
     if (!ec) {
       websocket::stream_base::timeout timeout =
           websocket::stream_base::timeout::suggested(beast::role_type::client);
@@ -169,11 +230,18 @@ void WsClient::run() {
       conn->ws.handshake(config_.host, config_.target, ec);
     }
 
-    if (!ec) {
-      {
-        const std::lock_guard<std::mutex> lock(conn_mutex_);
+    {
+      const std::lock_guard<std::mutex> lock(conn_mutex_);
+      connecting_ = nullptr;
+      if (!ec) {
         conn_ = conn.get();
+        // Restart the clock: the idle budget measures silence on an
+        // established connection, not the handshakes that preceded it.
+        last_activity_ns_.store(time::wall_ns());
       }
+    }
+
+    if (!ec) {
       if (ever_connected) reconnects_.fetch_add(1);
       ever_connected = true;
       backoff_ms = config_.initial_backoff_ms;  // healthy again
@@ -187,6 +255,7 @@ void WsClient::run() {
         conn->ws.read(buffer, ec);
         if (ec) break;
         const auto recv_ns = time::wall_ns();
+        last_activity_ns_.store(recv_ns);
         messages_.fetch_add(1);
         bytes_.fetch_add(buffer.size());
         if (on_message_) {
@@ -201,6 +270,7 @@ void WsClient::run() {
         const std::lock_guard<std::mutex> lock(conn_mutex_);
         conn_ = nullptr;
       }
+      last_activity_ns_.store(0);
     }
 
     if (!running_.load()) break;
