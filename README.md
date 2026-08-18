@@ -1,18 +1,55 @@
 # basis
 
-A real-time, cross-venue market-data engine in C++20. It ingests live order
-books for the same real-world event from two structurally different prediction
-markets, normalizes them into one schema, and measures the price *lead* of one
-venue over the other.
+A real-time, cross-venue market-data engine in C++20. It reads live order
+books from several venues over TLS WebSocket, normalizes them into one
+schema, and measures which venue's price moves first.
+
+**The measured result: on a 45 minute capture of Binance and Coinbase
+quoting BTC, a repricing on Binance is answered by Coinbase 57.7% of the
+time, while a repricing on Coinbase is answered by Binance 26.4% of the
+time** (two-proportion z = 11.76, 204,864 messages, zero malformed). The
+gap holds at every threshold from $0.25 to $2.00. The measurement is
+biased *against* that conclusion by roughly 36 to 86 ms of network
+asymmetry, and finds it anyway. Full methodology, the two estimators, and
+the bias budget: [`docs/bench/cross_venue_lead.md`](docs/bench/cross_venue_lead.md).
+
+Both sockets are read by one process so the two streams share a clock,
+which is the detail that makes the measurement possible at all - two
+processes, or two clocks, would put an unknown offset directly into the
+quantity being estimated:
+
+```
+basis record out.feedlog --binance btcusdt --coinbase BTC-USD --seconds 2700
+basis xvenue-lead out.feedlog
+```
+
+## What it was built for, and where that stands
+
+The original target is a pair of prediction markets rather than two crypto
+exchanges:
 
 - **Kalshi** is a CFTC-regulated, USD-denominated, centralized exchange.
 - **Polymarket** runs on crypto rails (USDC): an off-chain order book with
   on-chain settlement on Polygon.
 
-They list contracts on the same outcomes but have different participant bases,
-capital efficiency, and settlement rails, so their prices diverge and one tends
-to move first. `basis` measures that lead in real time, over an engine built
-for low internal latency and zero message loss.
+They list contracts on the same outcomes with different participant bases,
+capital efficiency, and settlement rails, so their prices diverge and one
+tends to move first. That pairing is why the engine normalizes across
+venues at all, and `configs/contracts.toml` maps 14 real cross-venue
+contracts between Kalshi tickers and Polymarket token ids.
+
+**It has not been measured, and the reason is credentials, not code.**
+Polymarket's market channel is public and is captured live here
+(`docs/bench/latency.md` is a committed 30 minute session). Kalshi requires
+an authenticated session even for market data, and this repo has never had
+an account: the Kalshi adapter - signed session, gap-triggered
+re-snapshot - is verified offline down to the RSA-PSS signature and waits
+on a key. Binance and Coinbase are the pairing that is public on both
+sides, which is why the real cross-venue result above is crypto rather
+than prediction markets.
+
+That distinction is kept sharp everywhere in this repo: a figure is either
+measured on a committed capture or it is labelled as not yet measured.
 
 ![Normalized Polymarket mid prices from a 30 minute live capture](docs/img/live-mids.png)
 
@@ -28,16 +65,15 @@ The engine runs end to end, offline and live: real venue wire formats are
 parsed, normalized into per-event unified books, and measured for basis,
 lead-lag, and per-record ingest-to-signal latency, driven either by
 deterministic replay or by `basis live` streaming the venues in real
-time. Both live feeds sit behind the same `FeedAdapter` seam: Polymarket
-records real sessions over TLS WebSocket, and the Kalshi adapter (signed
-session, gap-triggered re-snapshot) is verified offline down to the RSA-PSS
-signature and waits only on account credentials for its first live capture.
-The hot path is zero-copy and allocator-instrumented, benchmarked against
-Bloomberg's BDE arenas (`docs/bench/allocator.md`). A price-time-priority
-matching engine (`docs/bench/matching_engine.md`) runs both as a
-throughput benchmark and as an independent check on the analytics. See
-`PLAN.md` for the full spec and `docs/design.md` for how the code is put
-together.
+time. Four venue parsers (Kalshi, Polymarket, Binance, Coinbase) sit
+behind one `FeedAdapter` seam. The hot path is zero-copy and
+allocator-instrumented, benchmarked against Bloomberg's BDE arenas
+(`docs/bench/allocator.md`). A price-time-priority matching engine
+(`docs/bench/matching_engine.md`) runs both as a throughput benchmark and
+as an independent check on the analytics. Things that broke along the way,
+and how they were found, are written up in
+[`docs/postmortems.md`](docs/postmortems.md). See `PLAN.md` for the full
+spec and `docs/design.md` for how the code is put together.
 
 ## Build and run
 
