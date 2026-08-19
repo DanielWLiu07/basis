@@ -4,14 +4,21 @@ A real-time, cross-venue market-data engine in C++20. It reads live order
 books from several venues over TLS WebSocket, normalizes them into one
 schema, and measures which venue's price moves first.
 
-**The measured result: on a 45 minute capture of Binance and Coinbase
-quoting BTC, a repricing on Binance is answered by Coinbase 57.7% of the
-time, while a repricing on Coinbase is answered by Binance 26.4% of the
-time** (two-proportion z = 11.76, 204,864 messages, zero malformed). The
-gap holds at every threshold from $0.25 to $2.00. The measurement is
-biased *against* that conclusion by roughly 36 to 86 ms of network
-asymmetry, and finds it anyway. Full methodology, the two estimators, and
-the bias budget: [`docs/bench/cross_venue_lead.md`](docs/bench/cross_venue_lead.md).
+**The measured result: across two 45 minute captures of Binance and
+Coinbase quoting BTC, a repricing on Binance is answered by Coinbase far
+more often than the reverse** - 0.577 against 0.264 in the first session
+(z = 11.76, 204,864 messages) and 0.903 against 0.539 in a second session
+eight days later that was three times as busy (z = 39.33, 642,919
+messages). The ordering holds at every threshold from $0.25 to $2.00 in
+both, and the measurement is biased *against* that conclusion by roughly
+36 to 86 ms of network asymmetry.
+
+The follow rates themselves do **not** replicate - both roughly doubled in
+the busier session, because a two second window catches more coincidence
+when the market is moving constantly. So the claim is the ordering and its
+significance, not a percentage: those describe one afternoon. Full
+methodology, both estimators, the replication, and the bias budget:
+[`docs/bench/cross_venue_lead.md`](docs/bench/cross_venue_lead.md).
 
 Both sockets are read by one process so the two streams share a clock,
 which is the detail that makes the measurement possible at all - two
