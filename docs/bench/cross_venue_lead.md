@@ -110,6 +110,41 @@ the bootstrap interval running 0 to 100 ms. The peak is on the Binance
 side, but an interval touching zero is not a resolved lead, and it is
 reported as unresolved.
 
+## Replication
+
+One capture is an anecdote. The measurement above was repeated on a second
+45 minute session taken eight days later
+(`docs/bench/btc-xvenue-2.feedlog.gz`, 642,919 messages against the
+first capture's 204,864 - the same window length in a market roughly three
+times as busy). Both feeds ran continuously: no gap over five seconds on
+either side, which is the first long capture taken since the idle watchdog
+landed and the reason it is worth saying.
+
+| Move threshold | Binance moves | answered | Coinbase moves | answered | z | leader |
+| ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| $0.25 | 3720 | 3359 (0.903) | 9834 | 5304 (0.539) | 39.33 | Binance |
+| $0.50 | 3541 | 3171 (0.896) | 8644 | 4737 (0.548) | 36.49 | Binance |
+| $1.00 | 3260 | 2874 (0.882) | 6681 | 3816 (0.571) | 30.97 | Binance |
+| $2.00 | 2764 | 2378 (0.860) | 4543 | 2681 (0.590) | 24.27 | Binance |
+
+The direction replicates at every threshold, and the sample is large
+enough that z runs from 24 to 39 rather than 6 to 12.
+
+**What does not replicate is the follow rates themselves, and that is the
+more useful thing to know.** Binance's rate went from 0.577 to 0.903 and
+Coinbase's from 0.264 to 0.539: both roughly doubled. A two second window
+catches more coincidence when a market is moving constantly, so an
+absolute follow rate is a property of the session as much as of the venue
+pair. The asymmetry survives - Binance is answered 1.7 times as often as
+it answers here, against 2.2 times in the quieter session - but the ratio
+is smaller on the busy day, in the direction more background movement
+would push it.
+
+So the claim these two captures jointly support is the ordering and its
+significance, not "57.7% versus 26.4%". Those two numbers describe one
+afternoon. Quoting them as a property of the venues would be the same
+mistake as quoting a frame rate without naming the GPU.
+
 ## What would have to be wrong for this to be an artifact
 
 Three things push the estimate, and only one pushes it toward the
