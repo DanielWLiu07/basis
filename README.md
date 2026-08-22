@@ -16,9 +16,24 @@ both, and the measurement is biased *against* that conclusion by roughly
 The follow rates themselves do **not** replicate - both roughly doubled in
 the busier session, because a two second window catches more coincidence
 when the market is moving constantly. So the claim is the ordering and its
-significance, not a percentage: those describe one afternoon. Full
-methodology, both estimators, the replication, and the bias budget:
-[`docs/bench/cross_venue_lead.md`](docs/bench/cross_venue_lead.md).
+significance, not a percentage: those describe one afternoon.
+
+**A third estimator says why the other two could only ever report an
+ordering.** Hayashi-Yoshida is the standard covariance estimator for
+prices observed at different, irregular times: it pairs returns over
+overlapping observation intervals instead of resampling both venues onto
+a common grid. Run on the same two captures, it finds a co-movement of
+0.71 and 1.18 where the grid estimator found 0.25 and 0.31 - the grid was
+recovering roughly a quarter to a third of what is in these books, and
+throwing the rest away as synchronization bias before it measured
+anything. That gap replicates across both captures. The millisecond-scale
+*direction* does not survive the same scrutiny, and the writeup says so
+rather than picking the capture that agreed.
+
+![Hayashi-Yoshida lag scan across two BTC/USD captures, against the peak the grid estimator reported on the same data](docs/img/hy-lead-scan.png)
+
+Full methodology, all three estimators, the replication, and the bias
+budget: [`docs/bench/cross_venue_lead.md`](docs/bench/cross_venue_lead.md).
 
 Both sockets are read by one process so the two streams share a clock,
 which is the detail that makes the measurement possible at all - two
@@ -215,7 +230,8 @@ level 2  src/feed/       venue parsers (Kalshi, Polymarket, Binance, Coinbase),
                          book sequencer, feedlog capture format
          src/normalize/  contract registry, event router (NO-side fold),
                          cross-venue crypto instrument naming
-         src/analytics/  divergence, cross-correlation lead-lag, event study
+         src/analytics/  divergence, cross-correlation and
+                         Hayashi-Yoshida lead-lag, event study
          src/api/        BLPAPI-style subscription interface
          src/exec/       price-time-priority matching engine, order index
          src/net/        TLS WebSocket client + Kalshi request signing

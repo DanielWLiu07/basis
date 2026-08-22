@@ -64,7 +64,7 @@ spread. Thirteen to one is not a market structure difference. The fix is
 a `Clear` ahead of the touch, and cross-correlation between the venues
 went from 0.175 to 0.471 once the book was real.
 
-## Two estimators, because they fail differently
+## Three estimators, because they fail differently
 
 **Cross-correlation** (`CrossCorrelationEstimator`) resamples both mid
 series onto a fixed grid and correlates returns across lags. It cannot
@@ -145,6 +145,93 @@ significance, not "57.7% versus 26.4%". Those two numbers describe one
 afternoon. Quoting them as a property of the venues would be the same
 mistake as quoting a frame rate without naming the GPU.
 
+## A third estimator, with no grid at all
+
+Both of the estimators above are shaped by the same limitation from
+opposite sides. The cross-correlation estimator resamples onto a grid and
+therefore cannot see past one bin. The event study avoids the grid by
+asking a coarser question at a two second scale. Neither can put a number
+on a lead of tens of milliseconds, which is the scale a lead between two
+crypto venues would actually live at.
+
+**Hayashi-Yoshida** (`HayashiYoshidaEstimator`) is the standard estimator
+for exactly this problem: covariance between two prices observed at
+different, irregular times. It sums the products of the two series'
+returns over every pair of observation intervals that overlap in time.
+No interpolation, no last-value carry forward, no empty bins, and so none
+of the attenuation the grid introduces. Shifting one venue's clock and
+rescanning turns it into a lead-lag curve (Hoffmann, Rosenbaum and
+Yoshida 2013; Huth and Abergel 2014), and the shift that maximizes it is
+how far one venue leads the other.
+
+It is fed the raw updates, never the 50 ms common clock the other two
+estimators use. Pre-sampling would destroy the asynchrony it reads the
+answer out of.
+
+The estimator is validated the way everything else here is, against
+injected leads it has to recover. With the follower republishing on a
+50 ms timer while the leader pushes every 5 ms, which is the shape of
+this venue pair, it returns injected leads of 10, 20, 50, 100 and 200 ms
+to within one scan step, and returns a ratio whose interval covers 1 when
+no lead was injected. A grid estimator has nothing to say about the first
+three of those: they are inside one bin.
+
+### What it found
+
+![Hayashi-Yoshida lag scan on both BTC/USD captures, against the peak the grid estimator reported on the same data](../img/hy-lead-scan.png)
+
+| | capture 1 | capture 2 |
+| :--- | ---: | ---: |
+| grid estimator peak correlation | 0.249 | 0.309 |
+| Hayashi-Yoshida peak | **0.706** | **1.178** |
+| grid estimator's share of it | 35% | 26% |
+| peak at | +55 ms | -5 ms |
+| lead-lag ratio (>1: Binance leads) | 1.65 | 0.66 |
+| ratio 95% interval | 0.17 to 11.21 | 0.56 to 0.79 |
+| direction resolved against zero | no | yes, negative |
+| peak vs the -86 ms path null | +141 ms | +81 ms |
+
+**The first row is the result.** The grid estimator was recovering
+roughly a quarter to a third of the co-movement that is actually in these
+books. That gap is the Epps effect, and it is the whole reason this
+document has been reporting an ordering rather than a duration: the
+instrument that produced the duration was throwing most of the signal
+away before it measured anything. Both captures agree on this, and it is
+the one thing here that replicates.
+
+**The raw peaks disagree in sign, and zero is the wrong null.** Capture 1
+peaks 55 ms on the Binance side, capture 2 peaks 5 ms on the Coinbase
+side. Read against zero those are contradictory. But zero is not where a
+synchronous venue pair would land on this instrument: the bias section
+below measures the capture host at roughly 86 ms further from Binance
+than from Coinbase one-way, which stamps every Binance message that much
+late. Two venues moving in perfect lockstep would peak at about -86 ms
+here, not at 0.
+
+Measured against that null, both captures land on the same side.
+Capture 1's +55 ms is about 141 ms of Binance lead, capture 2's -5 ms is
+about 81 ms, and the lead-lag ratios are tilted the same way once the
+same shift is applied to them. That is the first time a grid-free
+estimator in this repo has said anything at all about direction, and it
+agrees with the event study.
+
+**It is still not a duration, and is not published as one.** The 86 ms
+handicap is a connect-RTT proxy measured out of band, not the data path
+and not during these captures, so it cannot be subtracted and quoted.
+Two corrected estimates that differ by 60 ms are two estimates that
+happen to share a sign. The honest reading is that the co-movement is
+close to synchronous, the residual leans Binance, and separating a venue
+that moves first from a venue whose packets arrive first needs a capture
+host that is not 170 ms of round trip from one of them.
+
+The curves say the rest. Capture 2 is a clean, sharp peak: the two books
+move together, and the co-movement decays smoothly as either clock is
+shifted away from the other. Capture 1 is a plateau at 0.5 to 0.7 with no
+resolvable structure, which is why its argmax landed on a number its own
+bootstrap interval spans two orders of magnitude around. Reporting +55 ms
+off that curve without showing the curve would have been the mistake this
+figure exists to prevent.
+
 ## What would have to be wrong for this to be an artifact
 
 Three things push the estimate, and only one pushes it toward the
@@ -206,6 +293,15 @@ capturable by someone colocated.
 gunzip -c docs/bench/btc-xvenue.feedlog.gz > /tmp/btc-xvenue.feedlog
 ./build/src/basis xvenue-lead /tmp/btc-xvenue.feedlog --move-cents 25
 ./scripts/xvenue_report.sh /tmp/btc-xvenue.feedlog   # the sweep table above
+
+# the Hayashi-Yoshida scan and the figure above
+gunzip -c docs/bench/btc-xvenue-2.feedlog.gz > /tmp/btc-xvenue-2.feedlog
+./build/src/basis xvenue-lead /tmp/btc-xvenue.feedlog   --hy-curve /tmp/hy1.csv
+./build/src/basis xvenue-lead /tmp/btc-xvenue-2.feedlog --hy-curve /tmp/hy2.csv
+python3 scripts/plot_bench.py hy \
+    --curve "/tmp/hy1.csv:capture 1:0.249" \
+    --curve "/tmp/hy2.csv:capture 2:0.309" \
+    --out docs/img/hy-lead-scan.png
 ```
 
 Capture your own with `basis record --binance ... --coinbase ...` (both
