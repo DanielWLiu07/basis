@@ -19,6 +19,7 @@ add_executable(basis_tests
   test_divergence.cpp
   test_rng.cpp
   test_event_study.cpp
+  test_hayashi_yoshida.cpp
   test_lead_lag.cpp
   test_consensus.cpp
   test_session.cpp

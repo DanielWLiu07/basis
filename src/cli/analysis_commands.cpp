@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "analytics/event_study.h"
+#include "analytics/hayashi_yoshida.h"
 #include "analytics/lead_lag.h"
 #include "bench/replay_harness.h"
 #include "bench/stats_report.h"
@@ -129,10 +130,18 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   // known mid measures each venue's movement over identical windows.
   // 0 restores per-message sampling.
   std::int64_t sample_ms = 50;
+  // Hayashi-Yoshida scan. The step is not a resampling interval, so it can
+  // sit well under the venues' update period without inventing data.
+  std::int64_t hy_step_ms = 5;
+  std::int64_t hy_max_lag_ms = 2000;
   // Restricts the report to one canonical instrument. A capture with more
   // than one in it produces a block per instrument; scripts that want a
   // single block ask for it by name rather than by grepping the first hit.
   const std::string instrument_filter(flag_string(args, "--instrument", ""));
+  // Writes the Hayashi-Yoshida lag scan to CSV. The point estimate is the
+  // argmax of this curve, and a reader should be able to see whether that
+  // argmax sits on a peak or on a plateau.
+  const std::string hy_curve_path(flag_string(args, "--hy-curve", ""));
   for (std::size_t i = 1; i + 1 < args.size(); i += 2) {
     const auto v = parse_int(args[i + 1]);
     if (!v) continue;
@@ -141,9 +150,16 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
     else if (args[i] == "--move-cents") move_cents = *v;
     else if (args[i] == "--follow-ms") follow_ms = *v;
     else if (args[i] == "--sample-ms") sample_ms = *v;
+    else if (args[i] == "--hy-step-ms") hy_step_ms = *v;
+    else if (args[i] == "--hy-max-lag-ms") hy_max_lag_ms = *v;
   }
   if (grid_ms <= 0 || max_lag_bins <= 0) {
     basis::log::error("xvenue-lead: grid-ms and max-lag-bins must be positive");
+    return 1;
+  }
+  if (hy_step_ms <= 0 || hy_max_lag_ms < hy_step_ms) {
+    basis::log::error("xvenue-lead: hy-step-ms must be positive and no larger "
+                      "than hy-max-lag-ms");
     return 1;
   }
 
@@ -162,6 +178,9 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   const basis::analytics::EventStudyConfig evcfg{
       .move_cents = static_cast<double>(move_cents),
       .follow_window_ns = follow_ms * 1'000'000};
+  basis::analytics::HayashiYoshidaConfig hycfg;
+  hycfg.lag_step_ns = hy_step_ms * 1'000'000;
+  hycfg.max_lag_steps = static_cast<int>(hy_max_lag_ms / hy_step_ms);
 
   // One independent measurement per instrument. A capture with BTC and ETH
   // in it is two experiments over the same window, not one: the books must
@@ -169,22 +188,30 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   // they run under are identical, which is what makes the second
   // instrument a control on the first rather than a separate study.
   //
+  // Three estimators, because they fail in different ways and agreement
+  // between them is the result.
+  //
   // The cross-correlation estimator resamples onto a fixed grid, so it can
   // never resolve a lead shorter than one bin. The event study works on the
-  // raw irregular timestamps instead and answers a different question --
-  // whose moves get answered, and how fast -- so it is not bounded by the
-  // grid. Running both is the point: they fail in different ways.
+  // raw irregular timestamps and answers a different question -- whose
+  // moves get answered, and how fast -- so it is not bounded by the grid.
+  // Hayashi-Yoshida answers the first question without the grid at all,
+  // summing return products over overlapping observation intervals, which
+  // is what lets it put a duration on a lead the grid can only bracket.
   struct InstrumentState {
     InstrumentState(const basis::analytics::LeadLagConfig& c,
-                    const basis::analytics::EventStudyConfig& e)
-        : est(c), ev(e) {}
+                    const basis::analytics::EventStudyConfig& e,
+                    const basis::analytics::HayashiYoshidaConfig& h)
+        : est(c), ev(e), hy(h) {}
     std::array<basis::model::OrderBook, basis::model::kVenueCount> books;
     std::array<std::string, basis::model::kVenueCount> markets;
     std::array<std::uint64_t, basis::model::kVenueCount> msgs{};
     basis::analytics::CrossCorrelationEstimator est;
     basis::analytics::EventStudyEstimator ev;
+    basis::analytics::HayashiYoshidaEstimator hy;
     std::int64_t next_sample_ns = 0;
     std::uint64_t observations = 0;
+    std::uint64_t hy_observations = 0;
     bool mixed_markets = false;
   };
   // Ordered, so the report comes out the same way on every run regardless
@@ -215,7 +242,7 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
     if (!name) { ++unpaired; continue; }
     if (!instrument_filter.empty() && *name != instrument_filter) continue;
 
-    auto [it, inserted] = instruments.try_emplace(*name, cfg, evcfg);
+    auto [it, inserted] = instruments.try_emplace(*name, cfg, evcfg, hycfg);
     InstrumentState& st = it->second;
     ++st.msgs[vi];
     for (const auto& d : r.deltas) {
@@ -233,6 +260,12 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
     const auto a = st.books[static_cast<std::size_t>(basis::model::Venue::Binance)].mid();
     const auto b = st.books[static_cast<std::size_t>(basis::model::Venue::Coinbase)].mid();
     if (a && b) {
+      // Hayashi-Yoshida always gets the raw update, never the sampled one.
+      // --sample-ms exists to put both venues on identical windows for the
+      // other two estimators; handing that to HY would erase the very
+      // asynchrony it reads the lead out of.
+      st.hy.observe(*a, *b, rec->recv_ns);
+      ++st.hy_observations;
       if (sample_ms <= 0) {
         st.est.observe(*a, *b, rec->recv_ns);
         st.ev.observe(*a, *b, rec->recv_ns);
@@ -283,11 +316,14 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
               span_s, u(records), u(malformed), u(unrepresentable),
               u(unpaired), u(single_venue), instruments.size());
   std::printf("XVENUE grid_ms=%lld max_lag_bins=%d sample_ms=%lld "
-              "event_move_cents=%lld follow_window_ms=%lld\n",
+              "event_move_cents=%lld follow_window_ms=%lld "
+              "hy_step_ms=%lld hy_max_lag_ms=%lld\n",
               static_cast<long long>(grid_ms), max_lag_bins,
               static_cast<long long>(sample_ms),
               static_cast<long long>(move_cents),
-              static_cast<long long>(follow_ms));
+              static_cast<long long>(follow_ms),
+              static_cast<long long>(hy_step_ms),
+              static_cast<long long>(hy_max_lag_ms));
 
   // Every per-instrument line carries instrument=, so a multi-instrument
   // report stays greppable one instrument at a time.
@@ -304,6 +340,19 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
                 n, res.lead_seconds * 1000.0, res.correlation, u(res.samples),
                 res.ci_low_seconds * 1000.0, res.ci_high_seconds * 1000.0,
                 u(res.resamples), res.lead_is_significant() ? 1 : 0);
+    const auto hyrep = st.hy.analyze();
+    const auto& hyr = hyrep.lead;
+    std::printf("XVENUE instrument=%s hy_lead_ms=%.1f hy_corr=%.4f "
+                "hy_updates=%llu hy_ci_low_ms=%.1f hy_ci_high_ms=%.1f "
+                "hy_resamples=%llu hy_significant=%d\n",
+                n, hyr.lead_seconds * 1000.0, hyr.correlation,
+                u(st.hy_observations), hyr.ci_low_seconds * 1000.0,
+                hyr.ci_high_seconds * 1000.0, u(hyr.resamples),
+                hyr.lead_is_significant() ? 1 : 0);
+    std::printf("XVENUE instrument=%s hy_ratio=%.3f hy_ratio_ci_low=%.3f "
+                "hy_ratio_ci_high=%.3f hy_ratio_resolved=%d\n",
+                n, hyrep.ratio, hyrep.ratio_ci_low, hyrep.ratio_ci_high,
+                hyrep.ratio_resolved() ? 1 : 0);
     std::printf("XVENUE instrument=%s binance_moves=%llu answered=%llu "
                 "rate=%.3f median_follow_ms=%.1f\n",
                 n, u(evr.moves), u(evr.followed), evr.forward_follow_rate(),
@@ -315,6 +364,25 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
                 evr.reverse_median_follow_seconds * 1000.0);
     std::printf("XVENUE instrument=%s follow_rate_z=%.2f confirmed_leader=%d\n",
                 n, evr.follow_rate_z(), evr.confirmed_leader());
+  }
+  if (!hy_curve_path.empty()) {
+    std::ofstream out(hy_curve_path);
+    if (!out) {
+      basis::log::error("xvenue-lead: cannot write " + hy_curve_path);
+      return 1;
+    }
+    out << "instrument,lag_ms,hy_correlation\n";
+    for (const auto& [name, st] : instruments) {
+      for (const auto& pt : st.hy.curve()) {
+        out << name << ','
+            << static_cast<double>(pt.lag_ns) / 1e6 << ','
+            << pt.correlation << '\n';
+      }
+    }
+    if (!out) {
+      basis::log::error("xvenue-lead: write failed for " + hy_curve_path);
+      return 1;
+    }
   }
   std::printf("XVENUE note=positive_lead_means_binance_leads_coinbase\n");
   return 0;

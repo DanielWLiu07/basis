@@ -144,7 +144,12 @@ view, Tracy capture.
    maximizing correlation is the lead.
 3. Cross-check with an event study: when venue A's mid moves > threshold,
    measure time until B follows.
-4. Report **median lead + sample size + confidence**. Call it observational;
+4. Cross-check again with Hayashi-Yoshida, which needs no grid: it pairs
+   returns over overlapping observation intervals, so the asynchrony
+   between the venues is the input rather than something to resample away.
+   This is the estimator that shows how much of the co-movement steps 2
+   and 3 were losing.
+5. Report **median lead + sample size + confidence**. Call it observational;
    never claim causation.
 
 ## The numbers (fill only from committed benchmarks)
@@ -185,6 +190,14 @@ asking "measured how, on what?".
   This replaces the old `[N]-second cross-venue lead` bracket. That bracket
   was asking for a figure the data does not support, and filling it would
   have been the worst outcome available.
+- **The grid was losing three quarters of the signal.** Hayashi-Yoshida on
+  the same two captures measures a co-movement of 0.71 and 1.18 where the
+  grid-resampling estimator measured 0.25 and 0.31, so that estimator was
+  recovering roughly a quarter to a third of what is in the books before
+  it reported anything. This is the Epps effect measured on the repo's own
+  data by the repo's own binary, and it replicates across both captures.
+  The millisecond-scale direction does not replicate and is not claimed
+  (`docs/bench/cross_venue_lead.md`).
 - **Matching engine: 23.5 ns/op, 42.6M ops/sec**, 2.1x a `std::map` book on
   the same order flow, with the two books' fills required to agree before
   the timings mean anything (`docs/bench/matching_engine.md`).

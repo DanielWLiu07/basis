@@ -7,6 +7,8 @@ Two subcommands, one per figure:
          (docs/bench/live-poly-30min.feedlog.gz is the committed input)
   synth  the closed-loop validation picture: synthetic Kalshi and
          Polymarket mids with the injected lead visible
+  hy     the Hayashi-Yoshida lag scan from `basis xvenue-lead --hy-curve`,
+         against the peak the grid estimator found on the same capture
 
 The script rebuilds top-of-book from the raw wire messages independently
 of the C++ engine, so the figures double as a cross-check of the parsers:
@@ -19,9 +21,14 @@ Only needs matplotlib. Usage:
       --config configs/contracts.toml --out docs/img/live-mids.png
   python3 scripts/plot_bench.py synth captures/demo.feedlog \\
       --out docs/img/synth-lead.png
+  python3 scripts/plot_bench.py hy \\
+      --curve /tmp/hy1.csv:capture 1:0.249 \\
+      --curve /tmp/hy2.csv:capture 2:0.309 \\
+      --out docs/img/hy-lead-scan.png
 """
 
 import argparse
+import csv
 import gzip
 import json
 import re
@@ -274,6 +281,73 @@ def plot_synth(args):
     print("wrote", args.out)
 
 
+def plot_hy(args):
+    """The lag scan, and how much of it the grid estimator never sees.
+
+    The curve is the whole result: a point estimate is the argmax of this,
+    and an argmax is only worth as much as the shape under it. The dashed
+    lines are the peak correlation the grid-resampling estimator reported
+    on the same capture, so the vertical gap between a curve and its own
+    dashed line is co-movement that estimator lost to synchronization
+    bias, not co-movement that was not there.
+    """
+    series = []
+    for spec in args.curve:
+        path, label, grid = spec.rsplit(":", 2)
+        pts = []
+        with open(path, newline="") as f:
+            for row in csv.DictReader(f):
+                pts.append((float(row["lag_ms"]), float(row["hy_correlation"])))
+        pts.sort()
+        if not pts:
+            sys.exit("no points in " + path)
+        series.append((label, float(grid), pts))
+
+    fig, ax = plt.subplots(figsize=(9.0, 4.0), dpi=160)
+    fig.patch.set_facecolor(SURFACE)
+    style_axes(ax)
+
+    ax.axvline(0.0, color=GRID, linewidth=1.5, zorder=1)
+    for i, (label, grid, pts) in enumerate(series):
+        color = SERIES[i % len(SERIES)]
+        xs = [x for x, _ in pts]
+        ys = [y for _, y in pts]
+        ax.plot(xs, ys, linewidth=2.0, color=color, label=label,
+                solid_capstyle="round", zorder=3)
+        ax.axhline(grid, color=color, linewidth=1.4, linestyle=(0, (4, 3)),
+                   alpha=0.75, zorder=2)
+        peak_x, peak_y = max(pts, key=lambda p: p[1])
+        ax.plot([peak_x], [peak_y], marker="o", markersize=6, color=color,
+                markeredgecolor=SURFACE, markeredgewidth=2.0, zorder=4)
+        ax.annotate(f"{label}: peak {peak_y:.2f} at {peak_x:+.0f} ms",
+                    xy=(peak_x, peak_y), xytext=(8, 8),
+                    textcoords="offset points", fontsize=9,
+                    color=TEXT_SECONDARY)
+        # Pinned to the left edge in axis fraction, not to the first
+        # sample: the scan runs wider than the plotted lag range, so a
+        # data-space anchor lands outside the view and clips.
+        ax.annotate(f"{label}: grid estimator peak {grid:.2f}",
+                    xy=(0.012, grid), xycoords=("axes fraction", "data"),
+                    xytext=(0, 4), textcoords="offset points", fontsize=8,
+                    color=TEXT_SECONDARY)
+
+    ax.set_xlim(args.lag_limit_ms and -args.lag_limit_ms or None,
+                args.lag_limit_ms or None)
+    ax.set_ylim(bottom=0.0)
+    ax.set_xlabel("venue B clock shifted back by (ms)  "
+                  "- positive = Binance leads Coinbase",
+                  color=TEXT_SECONDARY, fontsize=9)
+    ax.set_ylabel("Hayashi-Yoshida covariance / sqrt(RV x RV)",
+                  color=TEXT_SECONDARY, fontsize=9)
+    ax.set_title("Hayashi-Yoshida lag scan, BTC/USD across two captures",
+                 color=TEXT_PRIMARY, fontsize=11, loc="left", pad=10)
+    ax.legend(loc="lower center", frameon=False, fontsize=9,
+              labelcolor=TEXT_SECONDARY, ncol=len(series))
+    fig.tight_layout()
+    fig.savefig(args.out, facecolor=SURFACE, bbox_inches="tight")
+    print("wrote", args.out)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -292,6 +366,16 @@ def main():
     synth.add_argument("--window-seconds", type=float, default=6.0)
     synth.add_argument("--out", default="docs/img/synth-lead.png")
     synth.set_defaults(func=plot_synth)
+
+    hy = sub.add_parser("hy", help="Hayashi-Yoshida lag scan")
+    hy.add_argument("--curve", action="append", required=True,
+                    metavar="PATH:LABEL:GRID_CORR",
+                    help="a --hy-curve CSV, its label, and the grid "
+                         "estimator's peak correlation on the same capture")
+    hy.add_argument("--lag-limit-ms", type=float, default=1000.0,
+                    help="x range; 0 for the whole scan")
+    hy.add_argument("--out", default="docs/img/hy-lead-scan.png")
+    hy.set_defaults(func=plot_hy)
 
     args = parser.parse_args()
     args.func(args)
