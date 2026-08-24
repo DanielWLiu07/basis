@@ -4,7 +4,9 @@
 #include "model/fees.h"
 
 #include <algorithm>
+#include <chrono>
 #include <optional>
+#include <thread>
 
 #include "core/time.h"
 #include "feed/feed_log.h"
@@ -269,8 +271,75 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
       parse_arena_ ? parse_arena_->resource()
                    : std::pmr::get_default_resource();
 
+  // Pacing state. `origin_mono` is the mono-clock instant the capture's
+  // first record is declared to arrive at; every later record's intended
+  // arrival is its offset in the capture divided by the speed factor.
+  const bool paced = replay_speed_ > 0.0;
+  stats_.replay_speed = replay_speed_;
+  std::int64_t origin_mono = 0;
+  std::int64_t origin_recv = 0;
+  // When the previous record finished. Compared against the next one's
+  // due time, this is what separates "the engine was still busy" from
+  // "the engine was idle and the harness overslept".
+  std::int64_t prev_done = 0;
+
   while (const auto record = reader.next()) {
     ++stats_.records;
+
+    std::int64_t intended = 0;
+    if (paced) {
+      if (stats_.records == 1) {
+        origin_mono = time::mono_ns();
+        origin_recv = record->recv_ns;
+      }
+      const double offset =
+          static_cast<double>(record->recv_ns - origin_recv) / replay_speed_;
+      intended = origin_mono + static_cast<std::int64_t>(offset);
+      const std::int64_t now = time::mono_ns();
+      if (now < intended) {
+        // Waiting accurately is most of this mode's job, and a plain
+        // sleep_for(the whole gap) is not accurate: OS timer granularity
+        // runs to a millisecond under load, and gaps get far shorter than
+        // that as the speed rises. So the bulk is slept in bounded
+        // chunks, re-reading the clock between them - a single
+        // sleep_for(150 ms) overshoots by whatever that one sleep gets
+        // wrong, while capping each at 20 ms bounds the error to what a
+        // 20 ms sleep gets wrong - and the last stretch is spun
+        // (set_pace_spin_ns). Spinning costs a core; accuracy is what the
+        // mode is for. The due time
+        // is always recomputed from the run's origin, so error never
+        // accumulates across records.
+        constexpr std::int64_t kSleepChunkNs = 20'000'000; // 20 ms
+        for (;;) {
+          const std::int64_t remaining = intended - time::mono_ns();
+          if (remaining <= pace_spin_ns_) break;
+          std::this_thread::sleep_for(std::chrono::nanoseconds(
+              std::min(remaining - pace_spin_ns_, kSleepChunkNs)));
+        }
+        while (time::mono_ns() < intended) { /* spin the tail */ }
+        // The engine was idle through all of that, so anything past the
+        // due time here is the harness's own overshoot, not backlog.
+        const std::int64_t woke = time::mono_ns();
+        if (woke > intended) {
+          ++stats_.pacer_overshoots;
+          stats_.max_overshoot_ns =
+              std::max(stats_.max_overshoot_ns, woke - intended);
+        }
+      } else if (stats_.records > 1) {
+        // Already past due before the harness even looked. Whether that
+        // is backlog depends on what the engine was doing: if the
+        // previous record was still in flight it is the engine's, and if
+        // it had finished it is the harness's.
+        if (prev_done > intended) {
+          ++stats_.records_late;
+          stats_.max_lag_ns = std::max(stats_.max_lag_ns, now - intended);
+        } else {
+          ++stats_.pacer_overshoots;
+          stats_.max_overshoot_ns =
+              std::max(stats_.max_overshoot_ns, now - intended);
+        }
+      }
+    }
 
     // Track the wall-clock span the capture covers (receive timestamps),
     // which gives the venue's real ingest rate, distinct from how fast the
@@ -327,14 +396,21 @@ std::optional<ReplayStats> ReplayHarness::run(const std::string& feedlog_path,
     // parsed is gone; an arena can now drop the whole message at once.
     if (parse_arena_) parse_arena_->release();
 
-    const auto span = time::mono_ns() - t0;
-    latency_.record(span);
-    stats_.pipeline_ns += span;
+    const auto done = time::mono_ns();
+    latency_.record(done - t0);
+    stats_.pipeline_ns += done - t0;
+    // Response time is measured from when the record was DUE, not from
+    // when the engine got to it. The two are the same number until the
+    // engine falls behind, and the whole point is that the second one
+    // keeps being true afterwards.
+    if (paced) response_latency_.record(done - intended);
+    prev_done = done;
   }
 
   stats_.malformed_lines = reader.malformed_lines();
   stats_.unmapped_deltas = normalizer_.unmapped_deltas();
   stats_.latency = latency_.report();
+  if (paced) stats_.response_latency = response_latency_.report();
 
   stats_.events.clear();
   stats_.baskets.reserve(baskets_.size());

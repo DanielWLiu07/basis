@@ -298,6 +298,65 @@ TEST(ReplayHarness, BreakdownIsOffByDefaultAndOnWhenAsked) {
             with->pipeline_ns);
 }
 
+TEST(ReplayHarness, UnpacedReplayReportsNoResponseTime) {
+  // The historical path. Flat out, the harness cannot know when a record
+  // was due, so it must leave response time empty rather than fill it
+  // with something that looks like an answer.
+  const auto reg = make_registry();
+  ReplayHarness harness(reg);
+  const auto stats = harness.run(write_fixture());
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->replay_speed, 0.0);
+  EXPECT_EQ(stats->response_latency.count, 0u);
+  EXPECT_EQ(stats->records_late, 0u);
+  EXPECT_EQ(stats->max_lag_ns, 0);
+  EXPECT_GT(stats->latency.count, 0u);  // service time still measured
+}
+
+TEST(ReplayHarness, PacedReplayMeasuresEveryRecordsResponseTime) {
+  // The fixture's timestamps span 4 us, so even at 1x this finishes
+  // instantly; the assertions are on the accounting, not on the clock.
+  // Every record gets a response sample, and lateness can never exceed
+  // the record count.
+  const auto reg = make_registry();
+  ReplayHarness harness(reg);
+  harness.set_replay_speed(1.0);
+  const auto stats = harness.run(write_fixture());
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->replay_speed, 1.0);
+  EXPECT_EQ(stats->response_latency.count, stats->latency.count);
+  EXPECT_LE(stats->records_late, stats->records);
+  EXPECT_GE(stats->max_lag_ns, 0);
+}
+
+TEST(ReplayHarness, PacingHoldsTheScheduleWhenTheEngineCanKeepUp) {
+  // 1000 records one millisecond apart, replayed at 100x, is a 10 ms
+  // schedule the pipeline is four orders of magnitude too fast to miss.
+  // Nothing should run late, which is the property that makes a clean
+  // response-time number mean something rather than being luck.
+  const auto path = testing::TempDir() + "paced.feedlog";
+  {
+    std::ofstream out(path);
+    for (int i = 0; i < 1000; ++i) {
+      out << (1'000'000LL * (i + 1)) << "\tkalshi\t"
+          << R"({"type":"orderbook_delta","sid":1,"seq":)" << (i + 6)
+          << R"(,"msg":{"market_ticker":"FED-26SEP-CUT","price":48,)"
+          << R"("delta":1,"side":"yes"}})" << "\n";
+    }
+  }
+  const auto reg = make_registry();
+  ReplayHarness harness(reg);
+  harness.set_replay_speed(100.0);
+  const auto stats = harness.run(path);
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->records, 1000u);
+  // A scheduler hiccup on a loaded CI box can push a handful late; the
+  // assertion is that the pacer holds the schedule, not that the OS is
+  // real-time. Anything approaching the whole run means it is broken.
+  EXPECT_LT(stats->records_late, stats->records / 10);
+  EXPECT_EQ(stats->response_latency.count, 1000u);
+}
+
 // summarize() is a pure function of ReplayStats, so it can be pinned with a
 // hand-built input rather than a replay fixture.
 TEST(ReplaySummary, TotalsRankingAndTruncation) {
