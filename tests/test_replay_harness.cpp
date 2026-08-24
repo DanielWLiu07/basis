@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -329,32 +330,55 @@ TEST(ReplayHarness, PacedReplayMeasuresEveryRecordsResponseTime) {
   EXPECT_GE(stats->max_lag_ns, 0);
 }
 
-TEST(ReplayHarness, PacingHoldsTheScheduleWhenTheEngineCanKeepUp) {
-  // 1000 records one millisecond apart, replayed at 100x, is a 10 ms
-  // schedule the pipeline is four orders of magnitude too fast to miss.
-  // Nothing should run late, which is the property that makes a clean
-  // response-time number mean something rather than being luck.
+TEST(ReplayHarness, PacingActuallyWaits) {
+  // 200 records two milliseconds apart is a 400 ms schedule at 1x.
+  //
+  // The assertion is a LOWER bound on elapsed wall time, deliberately. An
+  // earlier version of this test asserted that few records ran late,
+  // which is a statement about the machine rather than about the code:
+  // the ASan job on a shared runner could not meet it and the build went
+  // red for a correct pacer. A slow or noisy machine can only make this
+  // run take LONGER, so a lower bound cannot be tripped by load - only by
+  // a pacer that stopped waiting, which is the regression worth catching.
   const auto path = testing::TempDir() + "paced.feedlog";
+  constexpr int kRecords = 200;
+  constexpr std::int64_t kSpacingNs = 2'000'000;  // 2 ms
   {
     std::ofstream out(path);
-    for (int i = 0; i < 1000; ++i) {
-      out << (1'000'000LL * (i + 1)) << "\tkalshi\t"
+    for (int i = 0; i < kRecords; ++i) {
+      out << (kSpacingNs * (i + 1)) << "\tkalshi\t"
           << R"({"type":"orderbook_delta","sid":1,"seq":)" << (i + 6)
           << R"(,"msg":{"market_ticker":"FED-26SEP-CUT","price":48,)"
           << R"("delta":1,"side":"yes"}})" << "\n";
     }
   }
   const auto reg = make_registry();
+
   ReplayHarness harness(reg);
-  harness.set_replay_speed(100.0);
+  harness.set_replay_speed(1.0);
+  const auto start = std::chrono::steady_clock::now();
   const auto stats = harness.run(path);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
   ASSERT_TRUE(stats.has_value());
-  EXPECT_EQ(stats->records, 1000u);
-  // A scheduler hiccup on a loaded CI box can push a handful late; the
-  // assertion is that the pacer holds the schedule, not that the OS is
-  // real-time. Anything approaching the whole run means it is broken.
-  EXPECT_LT(stats->records_late, stats->records / 10);
-  EXPECT_EQ(stats->response_latency.count, 1000u);
+  EXPECT_EQ(stats->records, static_cast<std::uint64_t>(kRecords));
+  EXPECT_EQ(stats->response_latency.count,
+            static_cast<std::uint64_t>(kRecords));
+
+  // 60% of the schedule: comfortably above what an unpaced run of 200
+  // tiny deltas takes (microseconds), comfortably below the schedule
+  // itself so a little clock jitter cannot fail it.
+  const auto schedule = std::chrono::nanoseconds(kSpacingNs * kRecords);
+  EXPECT_GT(elapsed, schedule * 6 / 10)
+      << "paced replay finished too fast to have waited";
+
+  // And the same file unpaced has to be far quicker, or the bound above
+  // proves nothing about pacing.
+  ReplayHarness flat_out(reg);
+  const auto t0 = std::chrono::steady_clock::now();
+  const auto unpaced = flat_out.run(path);
+  const auto flat_elapsed = std::chrono::steady_clock::now() - t0;
+  ASSERT_TRUE(unpaced.has_value());
+  EXPECT_LT(flat_elapsed, elapsed);
 }
 
 // summarize() is a pure function of ReplayStats, so it can be pinned with a
