@@ -158,11 +158,22 @@ Reconciled 2026-08-20 against `docs/bench/`. A figure lives here only once
 a committed artifact produces it, and the wording has to survive someone
 asking "measured how, on what?".
 
-- **p99 37 us ingest-to-signal, p50 0.5 us**, on the committed 30 minute
-  Polymarket capture (`docs/bench/latency.md`), 818-862k records/sec across
-  five runs. The tail is structural - full-book snapshot messages - and
-  stable run to run, so it is a property of the workload rather than the
-  scheduler.
+- **p99 78 us ingest-to-signal, p50 0.8 us**, on the committed 30 minute
+  Polymarket capture (`docs/bench/latency.md`), ~458k records/sec across
+  three runs in one session. The tail is structural - full-book snapshot
+  messages - and stable run to run, so it is a property of the workload
+  rather than the scheduler.
+- **That p99 is a service time, and it is 13x optimistic.** Replaying the
+  same capture at its own arrival schedule rather than back to back puts
+  response time at 1,534 us p99 against 115.7 us service in the same run.
+  A loop that never waits never samples the stall it is sitting in; that
+  is coordinated omission, and correcting it is the difference between a
+  number that describes the benchmark and one that describes a consumer.
+  The engine is behind on 14.8% of records at the venue's real rate even
+  though it averages 458k/sec against the venue's 19/sec, because 41% of
+  the feed's gaps are under 100 us. Do not quote a latency figure from
+  this repo without saying which of the two it is
+  (`docs/bench/latency.md`).
 - **2.19M messages/sec, 8.2M deltas/sec** parsing and applying a live
   Binance capture against the venue's own 269 msgs/sec
   (`docs/bench/ingest.md`), best of five spanning 2.00-2.19M. A 300k floor
