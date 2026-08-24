@@ -1,6 +1,8 @@
 #include "cli/args.h"
 
 #include <charconv>
+#include <stdexcept>
+#include <string>
 
 namespace basis::cli {
 
@@ -27,6 +29,23 @@ std::string flag_string(const std::vector<std::string_view>& args,
                         std::string_view name, std::string fallback) {
   for (std::size_t i = 0; i + 1 < args.size(); ++i) {
     if (args[i] == name) return std::string(args[i + 1]);
+  }
+  return fallback;
+}
+
+double flag_double(const std::vector<std::string_view>& args,
+                   std::string_view name, double fallback) {
+  for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+    if (args[i] != name) continue;
+    const std::string text(args[i + 1]);
+    try {
+      std::size_t consumed = 0;
+      const double v = std::stod(text, &consumed);
+      if (consumed != text.size()) return fallback;  // trailing junk
+      return v;
+    } catch (...) {
+      return fallback;
+    }
   }
   return fallback;
 }

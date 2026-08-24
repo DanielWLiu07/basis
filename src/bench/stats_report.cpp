@@ -100,6 +100,21 @@ void print_stats_json(const ReplayStats& stats,
               static_cast<double>(stats.latency.p90_ns) / 1e3,
               static_cast<double>(stats.latency.p99_ns) / 1e3,
               static_cast<double>(stats.latency.max_ns) / 1e3);
+  if (stats.replay_speed > 0.0) {
+    std::printf("  \"response_us\": {\"p50\": %.3f, \"p90\": %.3f, "
+                "\"p99\": %.3f, \"max\": %.3f},\n",
+                static_cast<double>(stats.response_latency.p50_ns) / 1e3,
+                static_cast<double>(stats.response_latency.p90_ns) / 1e3,
+                static_cast<double>(stats.response_latency.p99_ns) / 1e3,
+                static_cast<double>(stats.response_latency.max_ns) / 1e3);
+    std::printf("  \"pacing\": {\"speed\": %.1f, \"records_late\": %llu, "
+                "\"max_lag_us\": %.3f, \"pacer_overshoots\": %llu, "
+                "\"max_overshoot_us\": %.3f},\n",
+                stats.replay_speed, u(stats.records_late),
+                static_cast<double>(stats.max_lag_ns) / 1e3,
+                u(stats.pacer_overshoots),
+                static_cast<double>(stats.max_overshoot_ns) / 1e3);
+  }
   std::printf("  \"pipeline\": {\"ms\": %.3f, \"records_per_sec\": %.1f},\n",
               static_cast<double>(stats.pipeline_ns) / 1e6, rps);
   const double span_s =
@@ -513,6 +528,36 @@ void print_stats(const ReplayStats& stats) {
               static_cast<double>(lat.p90_ns) / 1e3,
               static_cast<double>(lat.p99_ns) / 1e3,
               static_cast<double>(lat.max_ns) / 1e3);
+  // Service time above, response time here. They separate only once the
+  // engine stops keeping up with the schedule, which is the whole reason
+  // to measure both: an unpaced replay reports the first one and calls it
+  // latency, and that number stays flattering exactly when it should not.
+  if (stats.replay_speed > 0.0) {
+    const auto& rsp = stats.response_latency;
+    std::printf("latency   response (from intended arrival) at %.0fx real "
+                "rate (us): p50 %.1f  p90 %.1f  p99 %.1f  max %.1f\n",
+                stats.replay_speed,
+                static_cast<double>(rsp.p50_ns) / 1e3,
+                static_cast<double>(rsp.p90_ns) / 1e3,
+                static_cast<double>(rsp.p99_ns) / 1e3,
+                static_cast<double>(rsp.max_ns) / 1e3);
+    const auto pct = [&](std::uint64_t n) {
+      return stats.records == 0 ? 0.0
+          : 100.0 * static_cast<double>(n) /
+            static_cast<double>(stats.records);
+    };
+    std::printf("latency   engine behind on %llu of %llu records (%.2f%%), "
+                "worst backlog %.1f us\n",
+                u(stats.records_late), u(stats.records),
+                pct(stats.records_late),
+                static_cast<double>(stats.max_lag_ns) / 1e3);
+    // The instrument's own error, reported next to the engine's so the
+    // reader can tell how much of the tail is the harness oversleeping.
+    std::printf("latency   pacer overshoot on %llu records (%.2f%%), "
+                "worst %.1f us\n",
+                u(stats.pacer_overshoots), pct(stats.pacer_overshoots),
+                static_cast<double>(stats.max_overshoot_ns) / 1e3);
+  }
 
   // Mutually exclusive baskets: the mid-price sum is the venue's total
   // probability mass on the listed outcomes; the best-bid sum is checked

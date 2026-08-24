@@ -287,10 +287,10 @@ every figure traces to one command. Recorded so far:
   it produces load: 90 seconds of live public market data across 94
   symbols, 24,048 messages with zero malformed. The venue sustains 269
   messages/sec; the same pipeline parses and applies them at 2,189,981/sec,
-  8.2M deltas/sec. Four orders of magnitude of headroom is the honest
-  reading of every latency figure below - an engine with room over the
-  venues it consumes, not one pushed to its limit. (This was 932,471/sec
-  until a book-correctness fix; see the cross-venue entry below.)
+  8.2M deltas/sec. Four orders of magnitude of headroom, *on the average
+  rate* - which is not the rate anything arrives at, see the latency entry
+  below. (This was 932,471/sec until a book-correctness fix; see the
+  cross-venue entry below.)
 - `docs/bench/cross_venue_lead.md`: the first lead-lag measurement in this
   repo taken on a real market rather than a synthetic session with a lead
   injected on purpose. Binance BTCUSDT against Coinbase BTC-USD, both
@@ -309,7 +309,17 @@ every figure traces to one command. Recorded so far:
   book; a measurement that reads prices out of one can.
 - `docs/bench/latency.md`: on a committed 30-minute live capture (34,731
   messages, 266,597 deltas, zero loss), ingest-to-signal latency is
-  p50 0.5 us / p99 37 us at ~840k records/sec, stable across runs.
+  p50 0.8 us / p99 78 us at ~458k records/sec, stable across runs. Those
+  are **service** times from a back-to-back replay, and replaying the
+  capture at its own arrival schedule instead shows what that costs:
+  the p99 a consumer of the feed actually waits is **13x higher**
+  (116 us service against 1,534 us response, same run), because a loop
+  that never waits also never samples the stall it is in - coordinated
+  omission. The same experiment found the engine genuinely behind on
+  **one record in seven** at the venue's real rate, despite averaging 19
+  messages/sec against a 458k/sec pipeline: 41% of this feed's
+  inter-arrival gaps are under 100 microseconds, so the mean rate
+  describes nothing that happens.
 - `docs/bench/soak.md`: four unattended hours live (59,891 messages, 49 MB),
   3 natural venue disconnects survived, zero malformed, zero rejected,
   zero gaps; same latency percentiles as the shorter capture, so the

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -296,6 +297,88 @@ TEST(ReplayHarness, BreakdownIsOffByDefaultAndOnWhenAsked) {
   EXPECT_GT(with->downstream_ns_total, 0);
   EXPECT_LE(with->parse_ns_total + with->downstream_ns_total,
             with->pipeline_ns);
+}
+
+TEST(ReplayHarness, UnpacedReplayReportsNoResponseTime) {
+  // The historical path. Flat out, the harness cannot know when a record
+  // was due, so it must leave response time empty rather than fill it
+  // with something that looks like an answer.
+  const auto reg = make_registry();
+  ReplayHarness harness(reg);
+  const auto stats = harness.run(write_fixture());
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->replay_speed, 0.0);
+  EXPECT_EQ(stats->response_latency.count, 0u);
+  EXPECT_EQ(stats->records_late, 0u);
+  EXPECT_EQ(stats->max_lag_ns, 0);
+  EXPECT_GT(stats->latency.count, 0u);  // service time still measured
+}
+
+TEST(ReplayHarness, PacedReplayMeasuresEveryRecordsResponseTime) {
+  // The fixture's timestamps span 4 us, so even at 1x this finishes
+  // instantly; the assertions are on the accounting, not on the clock.
+  // Every record gets a response sample, and lateness can never exceed
+  // the record count.
+  const auto reg = make_registry();
+  ReplayHarness harness(reg);
+  harness.set_replay_speed(1.0);
+  const auto stats = harness.run(write_fixture());
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->replay_speed, 1.0);
+  EXPECT_EQ(stats->response_latency.count, stats->latency.count);
+  EXPECT_LE(stats->records_late, stats->records);
+  EXPECT_GE(stats->max_lag_ns, 0);
+}
+
+TEST(ReplayHarness, PacingActuallyWaits) {
+  // 200 records two milliseconds apart is a 400 ms schedule at 1x.
+  //
+  // The assertion is a LOWER bound on elapsed wall time, deliberately. An
+  // earlier version of this test asserted that few records ran late,
+  // which is a statement about the machine rather than about the code:
+  // the ASan job on a shared runner could not meet it and the build went
+  // red for a correct pacer. A slow or noisy machine can only make this
+  // run take LONGER, so a lower bound cannot be tripped by load - only by
+  // a pacer that stopped waiting, which is the regression worth catching.
+  const auto path = testing::TempDir() + "paced.feedlog";
+  constexpr int kRecords = 200;
+  constexpr std::int64_t kSpacingNs = 2'000'000;  // 2 ms
+  {
+    std::ofstream out(path);
+    for (int i = 0; i < kRecords; ++i) {
+      out << (kSpacingNs * (i + 1)) << "\tkalshi\t"
+          << R"({"type":"orderbook_delta","sid":1,"seq":)" << (i + 6)
+          << R"(,"msg":{"market_ticker":"FED-26SEP-CUT","price":48,)"
+          << R"("delta":1,"side":"yes"}})" << "\n";
+    }
+  }
+  const auto reg = make_registry();
+
+  ReplayHarness harness(reg);
+  harness.set_replay_speed(1.0);
+  const auto start = std::chrono::steady_clock::now();
+  const auto stats = harness.run(path);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->records, static_cast<std::uint64_t>(kRecords));
+  EXPECT_EQ(stats->response_latency.count,
+            static_cast<std::uint64_t>(kRecords));
+
+  // 60% of the schedule: comfortably above what an unpaced run of 200
+  // tiny deltas takes (microseconds), comfortably below the schedule
+  // itself so a little clock jitter cannot fail it.
+  const auto schedule = std::chrono::nanoseconds(kSpacingNs * kRecords);
+  EXPECT_GT(elapsed, schedule * 6 / 10)
+      << "paced replay finished too fast to have waited";
+
+  // And the same file unpaced has to be far quicker, or the bound above
+  // proves nothing about pacing.
+  ReplayHarness flat_out(reg);
+  const auto t0 = std::chrono::steady_clock::now();
+  const auto unpaced = flat_out.run(path);
+  const auto flat_elapsed = std::chrono::steady_clock::now() - t0;
+  ASSERT_TRUE(unpaced.has_value());
+  EXPECT_LT(flat_elapsed, elapsed);
 }
 
 // summarize() is a pure function of ReplayStats, so it can be pinned with a

@@ -43,6 +43,47 @@ struct ReplayStats {
   std::uint64_t hashes_unverifiable = 0;
 
   LatencyRecorder::Report latency;  // per-record ingest-to-signal
+
+  // Response time, which is a different and less flattering quantity.
+  //
+  // `latency` above is SERVICE time: the clock starts when the engine
+  // picks a record up. Replayed flat out that is all it can ever be,
+  // because the loop never moves on until the previous record is done, so
+  // a slow record delays its successors and nobody measures the delay.
+  // That is coordinated omission, and it makes a p99 look good in exactly
+  // the situation a real consumer would be suffering.
+  //
+  // Under pacing the harness knows when each record was SUPPOSED to
+  // arrive, from the capture's own receive timestamps, and measures from
+  // there instead. Queueing shows up where it belongs. Only populated
+  // when replay_speed > 0; identical to `latency` when the engine is
+  // never behind, which is the result worth having at the venue's real
+  // rate.
+  LatencyRecorder::Report response_latency;
+
+  // Pacing state. speed 0 means the replay ran flat out and
+  // response_latency is empty.
+  double        replay_speed = 0.0;
+
+  // Two different reasons a record can be reached after it was due, and
+  // conflating them would make the harness lie about the engine.
+  //
+  // `records_late` counts genuine backlog: the previous record was still
+  // being processed when this one came due, so the engine is behind and
+  // the delay is its own. That is the quantity response time exists to
+  // expose.
+  //
+  // `pacer_overshoots` counts the other case: the engine was idle and
+  // waiting, and the sleep the harness itself was in ran long. That is
+  // the instrument's error, not the engine's, and it is reported
+  // separately so a reader can see how much of the tail belongs to the
+  // measurement. Sleeping is only used for waits well clear of the OS
+  // timer's granularity and the last stretch is spun, so it should stay
+  // small; when it does not, the response-time tail is not trustworthy.
+  std::uint64_t records_late = 0;
+  std::int64_t  max_lag_ns = 0;      // worst backlog, engine's own
+  std::uint64_t pacer_overshoots = 0;
+  std::int64_t  max_overshoot_ns = 0;
   std::int64_t pipeline_ns = 0;     // sum of measured spans, excludes file io
 
   // Wall-clock span the capture covers, from receive timestamps. The
@@ -300,6 +341,27 @@ class ReplayHarness {
   // split, not for the absolute latency number.
   void set_breakdown(bool on) { breakdown_ = on; }
 
+  // Replay at the capture's own arrival schedule, time-compressed by
+  // `speed`: 1.0 is real time, 100.0 is a hundred times the rate the
+  // venue actually sent at, 0 (the default) is flat out and unpaced.
+  //
+  // Pacing is what makes response time measurable at all. It is also the
+  // only way to ask where the engine stops keeping up: raise the speed
+  // until response time detaches from service time, and that multiple of
+  // the venue's real rate is the saturation point.
+  void set_replay_speed(double speed) { replay_speed_ = speed; }
+
+  // How much of each wait is spun rather than slept, in nanoseconds.
+  //
+  // This is the accuracy/CPU dial, and it has to be a dial because the
+  // right setting depends on what is being measured. Sleeping is cheap
+  // and inaccurate: a general-purpose OS overshoots by milliseconds under
+  // load, which swamps a microsecond-scale response time. Spinning is
+  // exact and costs a core for the whole run. Default 2 ms covers the
+  // timer granularity; set it past the capture's largest gap to spin
+  // every wait and take the instrument's error out of the answer.
+  void set_pace_spin_ns(std::int64_t ns) { pace_spin_ns_ = ns; }
+
   // Replays at max rate. Nullopt only if the file cannot be opened.
   std::optional<ReplayStats> run(const std::string& feedlog_path,
                                  std::string* error = nullptr);
@@ -393,6 +455,9 @@ class ReplayHarness {
   std::vector<std::string> dirty_events_;
   std::unordered_map<std::string, std::size_t> event_to_basket_;
   LatencyRecorder latency_;
+  LatencyRecorder response_latency_;
+  double replay_speed_ = 0.0;
+  std::int64_t pace_spin_ns_ = 2'000'000;  // 2 ms
   ReplayStats stats_;
 };
 

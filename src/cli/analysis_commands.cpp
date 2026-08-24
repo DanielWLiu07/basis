@@ -582,6 +582,15 @@ int run_replay(const std::vector<std::string_view>& args) {
   const bool breakdown = has_flag(args, "--breakdown");
   const bool as_json = has_flag(args, "--json");
   const auto csv_path = flag_string(args, "--csv", "");
+  // Replay at the capture's own arrival schedule, compressed by this
+  // factor. 0 keeps the historical flat-out replay, which can only ever
+  // report service time.
+  const auto speed = flag_double(args, "--speed", 0.0);
+  // How much of each pacing wait is spun instead of slept. Past the
+  // capture's largest gap this spins every wait, which is what it takes
+  // for the harness's own timer error to stop dominating a
+  // microsecond-scale response time.
+  const auto spin_ms = flag_double(args, "--pace-spin-ms", 2.0);
   const auto episodes_csv_path = flag_string(args, "--episodes-csv", "");
 
   std::string error;
@@ -643,9 +652,17 @@ int run_replay(const std::vector<std::string_view>& args) {
     }
   }
 
+  if (speed < 0.0 || (speed > 0.0 && speed < 0.001) || speed > 1e9) {
+    basis::log::error("replay: --speed must be 0 (unpaced) or a positive "
+                      "multiple of real time");
+    return 1;
+  }
+
   basis::bench::ReplayHarness harness(*registry, &session, {}, book_mr);
   harness.set_parse_arena(parse_arena);
   harness.set_breakdown(breakdown);
+  harness.set_replay_speed(speed);
+  harness.set_pace_spin_ns(static_cast<std::int64_t>(spin_ms * 1e6));
   const auto stats = harness.run(in_path, &error);
   if (!stats) {
     basis::log::error(error);
