@@ -19,6 +19,9 @@
 #include "normalize/contract_registry.h"
 
 #ifdef BASIS_HAS_BDE
+// Only the BDE configuration compiles BdeParseArena below, so this is the
+// one include no other build can catch the loss of.
+#include "alloc/bde_arena.h"
 #endif
 
 namespace basis::cli {
