@@ -29,8 +29,9 @@ add_executable(basis_tests
   test_counting_resource.cpp
   test_sha1.cpp
   test_bounded_queue.cpp
+  test_ingest_bench.cpp
 )
-target_link_libraries(basis_tests PRIVATE basis_bench GTest::gtest_main)
+target_link_libraries(basis_tests PRIVATE basis_cli GTest::gtest_main)
 if(BASIS_ENABLE_BDE)
   target_sources(basis_tests PRIVATE test_bde_arena.cpp)
   target_link_libraries(basis_tests PRIVATE basis_alloc_bde)

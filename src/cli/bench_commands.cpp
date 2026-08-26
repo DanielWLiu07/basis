@@ -1,7 +1,10 @@
 #include "cli/commands.h"
 
+#include <array>
 #include <cstdio>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "bench/fanout_bench.h"
 #include "bench/lob_bench.h"
@@ -108,58 +111,98 @@ int run_fanout_bench_cmd(const std::vector<std::string_view>& args) {
 // timed against real venue data rather than a synthetic stream. Reports
 // both the engine's rate and the venue's own message rate from the
 // capture's receive timestamps, because the gap between them is the point.
+//
+// Each record is parsed by the parser its own venue column names, which is
+// the dispatch `replay` already did. This command used to assume Binance
+// for every record instead. That is correct on a Binance capture and
+// silently wrong on any other: run against the committed 30 minute
+// Polymarket capture it parsed all 34,731 messages as Binance, called
+// every one of them Ignored, applied nothing to a book, and still printed
+// `headroom=125717x` - a timed loop measuring simdjson rejecting messages
+// rather than the pipeline doing work.
+//
+// So the venue column is now honoured, and a capture that yields no
+// deltas at all is an error. A benchmark whose only failure mode is a
+// confident wrong number is worse than one that does not run.
 int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
   const std::string path(args[0]);
-  std::ifstream in(path);
-  if (!in) {
+  basis::feed::FeedLogReader reader(path);
+  if (!reader.ok()) {
     basis::log::error("ingest-bench: cannot open " + path);
     return 1;
   }
   // Load the whole capture first: this measures parsing, not file IO.
-  std::vector<std::pair<std::int64_t, std::string>> records;
-  std::string line;
-  while (std::getline(in, line)) {
-    const auto t1 = line.find('\t');
-    if (t1 == std::string::npos) continue;
-    const auto t2 = line.find('\t', t1 + 1);
-    if (t2 == std::string::npos) continue;
-    const auto ts = parse_int(std::string_view(line).substr(0, t1));
-    if (!ts) continue;
-    records.emplace_back(*ts, line.substr(t2 + 1));
+  std::vector<basis::feed::FeedLogRecord> records;
+  while (auto record = reader.next()) {
+    records.push_back(std::move(*record));
   }
   if (records.empty()) {
     basis::log::error("ingest-bench: no usable records in " + path);
     return 1;
   }
 
-  basis::feed::BinanceParser parser;
+  // One parser per venue, held across the run: the parsers own simdjson
+  // buffers that are worth reusing, and a capture may interleave venues.
+  basis::feed::BinanceParser binance;
+  basis::feed::CoinbaseParser coinbase;
+  basis::feed::KalshiParser kalshi;
+  basis::feed::PolymarketParser polymarket;
   basis::model::UnifiedBook book;
+
+  std::array<std::uint64_t, basis::model::kVenueCount> per_venue{};
   std::uint64_t deltas = 0, ok = 0, ignored = 0, malformed = 0;
+  std::uint64_t unrepresentable = 0;
   const auto t0 = std::chrono::steady_clock::now();
-  for (const auto& [recv_ns, payload] : records) {
-    auto r = parser.parse(payload, recv_ns);
+  for (const auto& record : records) {
+    basis::feed::ParseResult r = [&] {
+      switch (record.venue) {
+        case basis::model::Venue::Binance:
+          return binance.parse(record.payload, record.recv_ns);
+        case basis::model::Venue::Coinbase:
+          return coinbase.parse(record.payload, record.recv_ns);
+        case basis::model::Venue::Kalshi:
+          return kalshi.parse(record.payload, record.recv_ns);
+        case basis::model::Venue::Polymarket:
+          return polymarket.parse(record.payload, record.recv_ns);
+      }
+      return basis::feed::ParseResult{};
+    }();
     switch (r.status) {
       case basis::feed::ParseStatus::Ok: ++ok; break;
       case basis::feed::ParseStatus::Ignored: ++ignored; break;
       case basis::feed::ParseStatus::Malformed: ++malformed; break;
     }
+    unrepresentable += r.levels_unrepresentable;
     for (const auto& d : r.deltas) {
       book.apply(d);
       ++deltas;
     }
+    ++per_venue[static_cast<std::size_t>(record.venue)];
   }
   const double ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - t0).count();
 
   const double venue_span_s =
-      static_cast<double>(records.back().first - records.front().first) / 1e9;
+      static_cast<double>(records.back().recv_ns - records.front().recv_ns) /
+      1e9;
   const double engine_rate = ms > 0.0 ? records.size() * 1000.0 / ms : 0.0;
   const double venue_rate =
       venue_span_s > 0.0 ? records.size() / venue_span_s : 0.0;
+
+  std::string venues;
+  for (int v = 0; v < basis::model::kVenueCount; ++v) {
+    if (per_venue[static_cast<std::size_t>(v)] == 0) continue;
+    if (!venues.empty()) venues += ' ';
+    venues += basis::model::to_string(static_cast<basis::model::Venue>(v));
+    venues += '=';
+    venues += std::to_string(per_venue[static_cast<std::size_t>(v)]);
+  }
   std::printf("INGEST records=%llu ok=%llu ignored=%llu malformed=%llu "
               "deltas=%llu\n",
               u(records.size()), u(ok), u(ignored), u(malformed), u(deltas));
+  std::printf("INGEST venues %s bad_lines=%llu unrepresentable_levels=%llu\n",
+              venues.c_str(), u(reader.malformed_lines()), u(unrepresentable));
   std::printf("INGEST venue_span_s=%.1f venue_msgs_per_sec=%.0f\n",
               venue_span_s, venue_rate);
   std::printf("INGEST engine_ms=%.1f engine_msgs_per_sec=%.0f "
@@ -167,6 +210,14 @@ int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
               ms, engine_rate,
               ms > 0.0 ? deltas * 1000.0 / ms : 0.0,
               venue_rate > 0.0 ? engine_rate / venue_rate : 0.0);
+
+  // The guard the old version lacked. Zero deltas means the timed loop
+  // did no pipeline work, so every rate above describes rejection cost.
+  if (deltas == 0) {
+    basis::log::error("ingest-bench: no deltas parsed from " + path +
+                      "; the rates above measure rejection, not ingest");
+    return 1;
+  }
   return 0;
 }
 
