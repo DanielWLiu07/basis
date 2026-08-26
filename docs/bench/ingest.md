@@ -65,6 +65,33 @@ scaled integer, which touches the order book, the analytics, and the
 matching engine's ladder assumption. The capture is enough to measure
 ingest, so the widening has not been done.
 
+## Every committed capture, and the defect that hid two of them
+
+`ingest-bench` takes any capture in the repo, because each record is parsed
+by the parser its venue column names:
+
+    binance-90s      records=24048  ok=24048  deltas=90411   269 msg/s  headroom=4578x
+    live-poly-30min  records=34731  ok=34273  deltas=266597   19 msg/s  headroom=82832x
+    btc-xvenue-2     binance + coinbase in one file, both dispatched
+
+Read the middle row against the first. The Polymarket capture reports a
+far larger headroom than the Binance one and that is not the engine being
+faster: it is the venue being slower. 19 messages a second against 269 is
+the whole reason `binance-90s` exists.
+
+Until this was fixed the command hardcoded the Binance parser and ignored
+the venue column. On the Polymarket capture that produced
+
+    INGEST records=34731 ok=0 ignored=34731 deltas=0
+    INGEST engine_msgs_per_sec=2426733 headroom=125717x
+
+which is a timed loop measuring how fast simdjson rejects a message it was
+never given, printed as ingest throughput. Nothing published here used the
+wrong input, so no figure in this file was ever affected, but the failure
+mode is worth naming: the output looked normal, the number looked good,
+and the only tell was an `ok=0` two lines above it. A run that produces no
+deltas is now an error rather than a result.
+
 ## What this does not claim
 
 These are parse and book-apply numbers on a recorded capture, with file IO
