@@ -83,7 +83,9 @@ target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
 # and nothing else, so the commands can gain includes without every other
 # command paying for them at compile time.
 add_library(basis_cli
-  cli/analysis_commands.cpp
+  cli/replay_commands.cpp
+  cli/xvenue_command.cpp
+  cli/book_verify_command.cpp
   cli/args.cpp
   cli/bench_commands.cpp
   cli/usage.cpp
