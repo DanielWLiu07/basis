@@ -2,10 +2,13 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "analytics/event_study.h"

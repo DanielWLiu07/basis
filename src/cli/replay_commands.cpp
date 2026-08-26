@@ -1,9 +1,11 @@
 #include "cli/commands.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <memory_resource>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bench/replay_harness.h"

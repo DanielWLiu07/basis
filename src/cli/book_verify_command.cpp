@@ -1,7 +1,12 @@
 #include "cli/commands.h"
 
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "cli/args.h"
