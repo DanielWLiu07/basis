@@ -74,6 +74,7 @@ add_library(basis_bench
   bench/latency_recorder.cpp
   bench/replay_harness.cpp
   bench/stats_report.cpp
+  bench/stats_report_json.cpp
   bench/synth_generator.cpp
 )
 target_link_libraries(basis_bench PUBLIC basis_feed basis_normalize
