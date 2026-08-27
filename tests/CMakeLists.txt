@@ -30,6 +30,7 @@ add_executable(basis_tests
   test_sha1.cpp
   test_bounded_queue.cpp
   test_ingest_bench.cpp
+  test_stats_report_json.cpp
 )
 target_link_libraries(basis_tests PRIVATE basis_cli GTest::gtest_main)
 if(BASIS_ENABLE_BDE)
