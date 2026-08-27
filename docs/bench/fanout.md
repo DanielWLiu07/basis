@@ -156,3 +156,17 @@ consumer that keeps up, subscriber and topic isolation, bounded memory
 not stalling behind a sleeping handler, and a concurrency test asserting
 that every slotted value is either delivered or conflated with four
 publishers and eight subscribers running at once.
+
+CI gates it. `scripts/perf_gate.sh` runs this bench on every commit and
+fails the build on `worst_staleness_updates != 0`, with `delivered > 0`
+beside it so an empty run cannot pass by delivering nothing, and a loose
+2x speedup floor that exists to catch the conflating path degrading to the
+synchronous one rather than to pin a hardware-dependent ratio.
+
+That gate was added late, and the reason is worth recording: the matching
+engine's equivalent property - the ladder and the reference book producing
+identical fills - had been gated since it was written, and this one had
+not. The two are the same kind of claim. A regression that made conflation
+deliver stale quotes would have passed CI with the speedup number still
+green, which is the failure mode an ungated correctness measurement always
+has.
