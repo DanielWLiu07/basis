@@ -19,6 +19,12 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v5
       - name: Physical design (levelization)
         run: ./scripts/levelize.py src
+
+      - name: Contracts script unit tests
+        # Pure parsing and date arithmetic only. The network half is not
+        # exercised here on purpose: a CI job that needs Polymarket to be
+        # up fails for reasons unrelated to this repo.
+        run: python3 tests/test_contracts_script.py
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
