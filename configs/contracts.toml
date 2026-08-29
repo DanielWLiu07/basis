@@ -1,4 +1,27 @@
-# Cross-venue contract registry: maps each venue's native market id to a
+# Cross-venue contract registry AS RECORDED IN JULY 2026.
+#
+# READ THIS BEFORE USING IT FOR A NEW CAPTURE: every contract below has
+# resolved. The July 2026 Fed meeting has happened and the 2026 World Cup
+# is over, so all 14 Polymarket tokens 404 and `scripts/contracts.py
+# check` reports 0/14. Recording against this file captures nothing.
+#
+# It is kept, unchanged, because it is the map for the committed captures.
+# docs/bench/live-poly-30min.feedlog.gz and soak.feedlog.gz carry these
+# token ids, so replaying them needs exactly these mappings, and every
+# per-event number in docs/bench/ reproduces only against this file.
+#
+# For a NEW recording use configs/contracts-live.toml, and refresh it
+# first - it rots the same way, just later:
+#
+#     scripts/contracts.py check configs/contracts-live.toml
+#     scripts/contracts.py refresh -o configs/contracts-live.toml
+#
+# The rot is worth naming because of how it presents. A registry of
+# resolved contracts and a market where nothing is trading produce the
+# same thing - zero messages - so nothing about an empty capture says
+# which one happened. That is why the check script exists and why this
+# header is this long.
+
 # shared, venue-neutral event id, so the same real-world outcome on Kalshi
 # and Polymarket lands in one unified book.
 #

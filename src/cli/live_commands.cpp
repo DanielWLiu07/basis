@@ -43,8 +43,13 @@ void handle_sigint(int) { g_interrupted.store(true); }
 int run_record(const std::vector<std::string_view>& args) {
   if (args.empty()) return usage();
   const std::string out_path(args[0]);
+  // record and live default to the LIVE registry, not the one the
+  // committed captures were recorded against. Those contracts have all
+  // resolved, so recording against them captures nothing while looking
+  // exactly like a quiet market. replay keeps the other default, because
+  // replaying a committed capture needs exactly the ids it holds.
   const auto config_path =
-      flag_string(args, "--config", "configs/contracts.toml");
+      flag_string(args, "--config", "configs/contracts-live.toml");
   const auto seconds = flag_value(args, "--seconds", 0);  // 0: until ctrl-c
   if (!seconds || *seconds < 0 || *seconds > 7 * 86'400) {
     basis::log::error("record: bad --seconds value");
@@ -356,8 +361,13 @@ class LiveAnalytics {
 };
 
 int run_live(const std::vector<std::string_view>& args) {
+  // record and live default to the LIVE registry, not the one the
+  // committed captures were recorded against. Those contracts have all
+  // resolved, so recording against them captures nothing while looking
+  // exactly like a quiet market. replay keeps the other default, because
+  // replaying a committed capture needs exactly the ids it holds.
   const auto config_path =
-      flag_string(args, "--config", "configs/contracts.toml");
+      flag_string(args, "--config", "configs/contracts-live.toml");
   const auto seconds = flag_value(args, "--seconds", 0);  // 0: until ctrl-c
   const auto report_every = flag_value(args, "--report", 5);
   if (!seconds || *seconds < 0 || !report_every || *report_every < 1) {
