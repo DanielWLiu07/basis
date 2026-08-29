@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Check or rebuild the Polymarket half of the contract registry.
+
+configs/contracts.toml maps venue-native market ids onto venue-neutral
+event ids, and it was built by hand from the venues' REST APIs. Hand-built
+means it rots, and prediction-market ids rot fast: every contract in the
+registry resolved within two months of it being written, at which point
+`basis record` captured nothing and `basis live` printed one message in
+twenty-five seconds.
+
+The failure mode is the problem. A dead registry and a quiet market look
+identical from the outside - zero messages either way - so the rot is
+silent until someone thinks to ask why a capture is empty. This script
+makes it loud:
+
+    scripts/contracts.py check                 exit 1 if any token is dead
+    scripts/contracts.py refresh -o out.toml   rebuild from what is trading
+
+`check` is the one that matters and is meant for CI or a pre-capture
+sanity run. `refresh` is a starting point for a human, not an oracle:
+picking which markets are worth recording is a judgement about liquidity
+and overlap with Kalshi that an API cannot make.
+
+Endpoint notes, learned the hard way:
+  clob.polymarket.com serves books and market listings with no auth.
+  gamma-api.polymarket.com returns 403 without a User-Agent header.
+"""
+
+import argparse
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+CLOB = "https://clob.polymarket.com"
+UA = {"User-Agent": "basis-contracts/1.0"}
+TIMEOUT = 20
+
+
+def get(url):
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return json.load(r)
+
+
+def book_state(token_id):
+    """(alive, detail) for one token. Alive means a two-sided book."""
+    try:
+        b = get(f"{CLOB}/book?token_id={token_id}")
+    except urllib.error.HTTPError as e:
+        # 404 with a JSON body is how the venue says "no such book".
+        return False, f"HTTP {e.code}"
+    except Exception as e:  # noqa: BLE001 - network, report and move on
+        return False, type(e).__name__
+    if isinstance(b, dict) and "error" in b:
+        return False, str(b["error"])[:40]
+    bids, asks = len(b.get("bids", [])), len(b.get("asks", []))
+    if bids and asks:
+        return True, f"{bids} bids / {asks} asks"
+    return False, f"one-sided ({bids} bids / {asks} asks)"
+
+
+def read_registry(path):
+    """(event_id, token) pairs in file order. A deliberately small TOML
+    reader: the registry is flat and generated, and a dependency on a TOML
+    library for eight lines of regex is not worth the install."""
+    text = open(path, encoding="utf-8").read()
+    out, current = [], None
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r'^id\s*=\s*"([^"]+)"', s)
+        if m:
+            current = m.group(1)
+            continue
+        m = re.match(r'^polymarket_token\s*=\s*"(\d+)"', s)
+        if m and current:
+            out.append((current, m.group(1)))
+    return out
+
+
+def cmd_check(args):
+    pairs = read_registry(args.config)
+    if not pairs:
+        print(f"no polymarket tokens found in {args.config}")
+        return 1
+    alive = 0
+    for event_id, token in pairs:
+        ok, detail = book_state(token)
+        alive += ok
+        print(f"  {'LIVE' if ok else 'DEAD'}  {event_id:34s} {detail}")
+        time.sleep(args.delay)
+    total = len(pairs)
+    print(f"\n{alive}/{total} tokens have a two-sided book")
+    if alive == total:
+        return 0
+    print(
+        f"\n{args.config} is stale. Prediction-market contracts resolve, and\n"
+        "a registry of resolved contracts records nothing while looking\n"
+        "exactly like a quiet market. Rebuild a starting point with:\n"
+        f"    {sys.argv[0]} refresh -o {args.config}.new"
+    )
+    return 1
+
+
+def sampling_markets(limit):
+    """Active markets from the CLOB listing, following the cursor."""
+    out, cursor = [], ""
+    while len(out) < limit:
+        url = f"{CLOB}/sampling-markets"
+        if cursor:
+            url += f"?next_cursor={cursor}"
+        page = get(url)
+        data = page.get("data", []) if isinstance(page, dict) else page
+        if not data:
+            break
+        out.extend(data)
+        cursor = page.get("next_cursor") if isinstance(page, dict) else None
+        if not cursor or cursor == "LTE=":
+            break
+    return out[:limit]
+
+
+def cmd_refresh(args):
+    print(f"fetching active markets from {CLOB} ...", file=sys.stderr)
+    markets = [
+        m
+        for m in sampling_markets(args.scan)
+        if m.get("active") and not m.get("closed") and m.get("enable_order_book")
+        and m.get("accepting_orders") and len(m.get("tokens", [])) == 2
+    ]
+    print(f"{len(markets)} candidates, probing books ...", file=sys.stderr)
+
+    chosen = []
+    for m in markets:
+        if len(chosen) >= args.count:
+            break
+        toks = {t.get("outcome", "").lower(): t.get("token_id") for t in m["tokens"]}
+        yes, no = toks.get("yes"), toks.get("no")
+        if not yes or not no:
+            continue
+        ok, detail = book_state(yes)
+        time.sleep(args.delay)
+        if not ok:
+            continue
+        chosen.append((m, yes, no, detail))
+        print(f"  keep  {str(m.get('question'))[:56]:58s} {detail}", file=sys.stderr)
+
+    if not chosen:
+        print("no live two-sided markets found", file=sys.stderr)
+        return 1
+
+    stamp = time.strftime("%Y-%m-%d", time.gmtime())
+    lines = [
+        "# Cross-venue contract registry.",
+        "#",
+        f"# Polymarket half generated by scripts/contracts.py on {stamp} from",
+        "# clob.polymarket.com/sampling-markets, keeping only markets that were",
+        "# active, accepting orders, and quoting a two-sided book at the time.",
+        "#",
+        "# The kalshi field is left empty on purpose. Matching an outcome across",
+        "# venues is a judgement about identical resolution wording, and a script",
+        "# that guessed it would put a wrong pairing into every number downstream.",
+        "# Fill it in by hand, or leave it empty and record Polymarket alone.",
+        "#",
+        "# Baskets come from Polymarket's neg_risk_market_id, which groups",
+        "# mutually exclusive outcomes of one question - the same thing `basket`",
+        "# means here, so the bid-sum arbitrage bound applies to them directly.",
+        "#",
+        f"# Re-check with: scripts/contracts.py check <this file>",
+        "",
+    ]
+    baskets, next_id = {}, {}
+    for m, yes, no, detail in chosen:
+        nr = m.get("neg_risk_market_id")
+        basket = None
+        if nr:
+            if nr not in baskets:
+                baskets[nr] = f"basket-{len(baskets) + 1}"
+            basket = baskets[nr]
+        slug = (m.get("market_slug") or m.get("condition_id", ""))[:44]
+        eid = re.sub(r"[^a-z0-9-]", "-", slug.lower()).strip("-") or "event"
+        next_id[eid] = next_id.get(eid, 0) + 1
+        if next_id[eid] > 1:
+            eid = f"{eid}-{next_id[eid]}"
+        lines.append("[[event]]")
+        lines.append(f'id = "{eid}"')
+        if basket:
+            lines.append(f'basket = "{basket}"')
+        q = str(m.get("question", "")).replace('"', "'")
+        # Depth goes on its own line: the registry parser accepts a comment
+        # line but not a trailing comment after a quoted value, and it says
+        # so rather than guessing, which is how this was caught.
+        lines.append(f"# book at generation time: {detail}")
+        lines.append(f'description = "{q}"')
+        lines.append('kalshi = ""')
+        lines.append(f'polymarket_token = "{yes}"')
+        lines.append(f'polymarket_no_token = "{no}"')
+        lines.append("")
+
+    text = "\n".join(lines)
+    if args.out == "-":
+        sys.stdout.write(text)
+    else:
+        open(args.out, "w", encoding="utf-8").write(text)
+        print(f"\nwrote {len(chosen)} events to {args.out}", file=sys.stderr)
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("check", help="fail if any configured token is dead")
+    c.add_argument("config", nargs="?", default="configs/contracts.toml")
+    c.add_argument("--delay", type=float, default=0.15)
+    c.set_defaults(fn=cmd_check)
+
+    r = sub.add_parser("refresh", help="build a registry from live markets")
+    r.add_argument("-o", "--out", default="-")
+    r.add_argument("--count", type=int, default=12, help="events to emit")
+    r.add_argument("--scan", type=int, default=400, help="markets to consider")
+    r.add_argument("--delay", type=float, default=0.15)
+    r.set_defaults(fn=cmd_refresh)
+
+    args = ap.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

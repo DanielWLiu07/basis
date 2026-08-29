@@ -150,8 +150,26 @@ cmake --build build-net -j
 ./build-net/src/basis replay captures/live.feedlog --config configs/contracts.toml
 ```
 
-`configs/contracts.toml` maps real cross-venue contracts (2026 World Cup
-winners, Fed decisions) between Kalshi tickers and Polymarket token ids.
+There are two registries, and the split matters. `configs/contracts.toml`
+maps the contracts the **committed captures** were recorded against, in
+July 2026 - 2026 World Cup winners and the July Fed decision. All of them
+have since resolved, so it captures nothing today and is kept only because
+replaying `docs/bench/*.feedlog.gz` needs exactly those ids.
+
+`configs/contracts-live.toml` is the one `record` and `live` default to,
+generated from what is currently trading. It rots the same way, just
+later, so check it before a capture:
+
+```
+scripts/contracts.py check configs/contracts-live.toml
+scripts/contracts.py refresh -o configs/contracts-live.toml
+```
+
+That check exists because of how the rot presents: a registry of resolved
+contracts and a market where nothing is trading both produce zero
+messages, and nothing about an empty capture says which one happened. The
+old registry went stale unnoticed and `basis live` printed one message in
+twenty-five seconds before anyone asked why.
 
 Kalshi requires an authenticated session even for market data (free
 account + RSA API key). With credentials, the same command captures both
