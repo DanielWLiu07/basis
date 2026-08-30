@@ -45,6 +45,15 @@ basis record out.feedlog --binance btcusdt --coinbase BTC-USD --seconds 2700
 basis xvenue-lead out.feedlog
 ```
 
+**Contents:** [What it was built for](#what-it-was-built-for-and-where-that-stands)
+- [Status](#status) - [Build and run](#build-and-run)
+- [Live capture](#live-capture) - [Design](#design-at-a-glance)
+- [Layout](#layout) - [Numbers](#numbers)
+
+Start with [Build and run](#build-and-run) if you want to see it work: it
+generates a synthetic session with a known cross-venue lead injected and
+replays it through the real parsers, with no network and no credentials.
+
 ## What it was built for, and where that stands
 
 The original target is a pair of prediction markets rather than two crypto
@@ -57,8 +66,14 @@ exchanges:
 They list contracts on the same outcomes with different participant bases,
 capital efficiency, and settlement rails, so their prices diverge and one
 tends to move first. That pairing is why the engine normalizes across
-venues at all, and `configs/contracts.toml` maps 14 real cross-venue
-contracts between Kalshi tickers and Polymarket token ids.
+venues at all, and the contract registry maps real cross-venue contracts
+between Kalshi tickers and Polymarket token ids.
+
+Prediction-market contracts resolve, so a registry of them has a shelf
+life. The 14 in `configs/contracts.toml` were matched in July 2026 and
+have all since settled; that file is kept because the committed captures
+carry its token ids. `configs/contracts-live.toml` is the current one and
+`scripts/contracts.py check` says whether it still is.
 
 **It has not been measured, and the reason is credentials, not code.**
 Polymarket's market channel is public and is captured live here
