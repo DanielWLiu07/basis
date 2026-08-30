@@ -64,6 +64,12 @@ jobs:
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: README flag check
+        # Runs here rather than in build-test because record and live only
+        # appear in the usage text of a BASIS_ENABLE_NET build, so a
+        # non-net binary would report the README's live-capture flags as
+        # missing.
+        run: ./scripts/check_readme_flags.py ./build/src/basis
 
   # macOS only: Homebrew bottles BDE; Linux has no packaged BDE and building
   # it from source is too heavy for a per-commit job.
