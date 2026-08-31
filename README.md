@@ -88,6 +88,14 @@ than prediction markets.
 That distinction is kept sharp everywhere in this repo: a figure is either
 measured on a committed capture or it is labelled as not yet measured.
 
+One scope limit belongs next to it. This is a **book** engine: it carries
+price levels and not trade prints. Every venue here publishes trades on
+the same socket, and the Coinbase parser can already read a `ticker`
+frame, but the live feed subscribes to `level2_batch` for depth, so no
+committed capture contains a single trade. Nothing in the analytics
+infers one. That is a real gap rather than a decision, and it is the
+largest one left in what the engine models.
+
 ![Normalized Polymarket mid prices from a 30 minute live capture](docs/img/live-mids.png)
 
 The engine's normalized view of real markets: 2026 World Cup winner books
