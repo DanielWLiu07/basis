@@ -160,7 +160,11 @@ check "fanout speedup"       "$fanout_speedup"   "v >= 2"
 #
 # 100 steps is about ten seconds of wall time at 1x, which is what a paced
 # run costs by definition: it is supposed to wait.
-pace_log=$(mktemp -t basis_pace)
+# Portable template. BSD mktemp accepts a bare -t prefix; GNU mktemp
+# requires XXXXXX in the template and fails without it, which under set -e
+# killed the script before any check ran - the failure looked like the
+# gate passing everything and then exiting 1.
+pace_log=$(mktemp "${TMPDIR:-/tmp}/basis_pace.XXXXXX")
 "$BIN" synth "$pace_log" --steps 100 --lead-ms 400 >/dev/null
 paced=$("$BIN" replay "$pace_log" --speed 1 --json)
 rm -f "$pace_log"
