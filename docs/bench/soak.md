@@ -36,10 +36,16 @@ Three consecutive replays:
 | 2   | 0.5 us | 0.7 us | 36.2 us | 770k records/sec  |
 | 3   | 0.5 us | 0.7 us | 37.0 us | 771k records/sec  |
 
-The percentiles agree with `latency.md`'s 30 minute capture (p50 0.5 us,
-p99 37 us) on a session recorded three days later with 1.7x the message
-count: the latency numbers are properties of the engine, not of one
-lucky recording.
+The percentiles agree with `latency.md`'s 30 minute capture on a session
+recorded three days later with 1.7x the message count: the latency
+numbers are properties of the engine, not of one lucky recording. Both
+captures re-measure at p50 0.8 us and p99 74 to 78 us today, against the
+p50 0.5 / p99 37 recorded when this was written - the agreement between
+the two captures is the durable part, the absolute figures move with the
+machine.
+
+Both are SERVICE times. What a consumer waiting on the feed sees is the
+response time, which `latency.md` shows is 13.3x larger at p99.
 
 ## What this claims and what it does not
 

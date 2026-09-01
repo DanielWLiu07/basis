@@ -253,13 +253,15 @@ measured Kalshi/Polymarket lead until that key exists.
 > books from four venues over TLS WebSocket into one normalized schema
 > through a zero-copy hot path, proven at 1-2 heap allocations per message
 > and at parity with Bloomberg BDE arenas by a counting-allocator
-> benchmark, behind a BLPAPI-style subscription interface. **p99 37 us
-> ingest-to-signal** on recorded live sessions and **2.19M messages/sec**
-> parse-and-apply against a venue producing 269. Measured a **cross-venue
-> price lead and replicated it** on an independent capture (two-proportion
-> z = 11.8 and 39.3), under a measurement biased against the result.
-> Zero message loss across forced disconnects and silent half-open
-> connections, all of it reproducible from CI-gated benchmarks.
+> benchmark, behind a BLPAPI-style subscription interface. Parses and
+> applies **~2M messages/sec** against a venue producing 269. Measured a
+> **cross-venue price lead and replicated it** on an independent capture
+> (two-proportion z = 11.8 and 39.3 across 204,864 and 642,919 messages),
+> under a measurement biased against the result. **Proved its own
+> published p99 was a service time and 13.3x optimistic** by replaying at
+> the venue's real arrival schedule, and gated the invariant in CI. Zero
+> message loss across forced disconnects and silent half-open connections,
+> all of it reproducible from CI-gated benchmarks.
 
 Notes on the wording, because each choice is load-bearing:
 
@@ -270,5 +272,14 @@ Notes on the wording, because each choice is load-bearing:
 - "at parity with BDE arenas" not "faster than": it was parity, and
   claiming otherwise is checkable in thirty seconds by anyone who opens
   `docs/bench/allocator.md`.
-- "against a venue producing 269" is what makes 2.19M mean something. A
-  throughput number with no denominator invites "so what?".
+- "against a venue producing 269" is what makes the throughput mean
+  something. A number with no denominator invites "so what?".
+- No bare ingest-to-signal p99 any more. This line used to lead with
+  "p99 37 us", which was wrong twice over. It had drifted - the same
+  committed captures measure 74 to 78 us now - and, more importantly, it
+  is a SERVICE time. docs/bench/latency.md's whole finding is that the
+  service p99 understates what a consumer sees by 13.3x, so quoting one
+  unqualified in a resume line contradicts the repo's own headline. The
+  finding replaces the figure, which is a better line anyway: anyone can
+  report a percentile, and almost nobody reports that they caught their
+  own benchmark flattering itself.
