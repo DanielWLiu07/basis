@@ -95,6 +95,30 @@ TEST(StatsReportJson, EmitsEveryKeyThePerfGateReads) {
   }
 }
 
+// The paced-replay block is emitted only when a --speed was given, and
+// perf_gate.sh reads three paths out of it to check the coordinated
+// omission invariant. Same contract, same reason: renaming one turns a
+// schema break into a gate that reports a missing value.
+TEST(StatsReportJson, EmitsThePacedKeysThePerfGateReads) {
+  basis::bench::ReplayStats s = one_event_stats();
+  s.replay_speed = 1.0;          // what gates the block
+  s.response_latency.count = 3;  // non-empty so the numbers are real
+  const std::string json = capture_json(s);
+  for (const char* key : {"\"response_us\"", "\"pacing\"", "\"speed\"",
+                          "\"records_late\"", "\"pacer_overshoots\""}) {
+    EXPECT_NE(json.find(key), std::string::npos)
+        << "perf_gate.sh reads " << key << " and it is no longer emitted";
+  }
+}
+
+// The same block must NOT appear on an unpaced run, or the gate would read
+// a response time from a measurement that never paced anything.
+TEST(StatsReportJson, OmitsThePacedKeysWhenNothingWasPaced) {
+  const std::string json = capture_json(one_event_stats());
+  EXPECT_EQ(json.find("\"response_us\""), std::string::npos);
+  EXPECT_EQ(json.find("\"pacing\""), std::string::npos);
+}
+
 // A gate that indexes events[0] cannot run against a report with no
 // events, so an empty run must still emit the array rather than omitting
 // the key - the difference between "no events" and "schema changed".
