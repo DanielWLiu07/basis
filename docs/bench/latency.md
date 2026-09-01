@@ -144,6 +144,14 @@ between them is coordinated omission and nothing else:
 | p90 | 13.4 us | 67.7 us | 5.1x |
 | p99 | 115.7 us | **1,533.9 us** | **13.3x** |
 
+CI gates the relationship rather than the microseconds. `perf_gate.sh`
+paces a short synthetic session at 1x on every commit and fails the build
+unless `response p99 >= service p99`. Absolute latency on a shared runner
+is noise; the invariant is not - response time is service time plus a
+wait, and a wait cannot be negative, so that inequality holds on every
+machine that has ever existed. If it ever fails, the harness is reading
+the wrong clock and every number in this file is suspect.
+
 **The p99 an unpaced replay reports is optimistic by more than an order of
 magnitude** against what a consumer of the same feed at the same rate
 actually waits. The median barely moves, which is the shape coordinated

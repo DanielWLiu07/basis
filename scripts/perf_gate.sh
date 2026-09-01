@@ -144,6 +144,35 @@ check "fanout staleness"     "$fanout_stale"     "v == 0"
 check "fanout delivered > 0" "$fanout_delivered" "v > 0"
 check "fanout speedup"       "$fanout_speedup"   "v >= 2"
 
+# Coordinated omission. The engine's headline latency is a SERVICE time -
+# how long one record takes once work starts on it - and a loop that
+# replays back to back never samples the wait a record does while its
+# predecessor is still being handled. Pacing the replay at the capture's
+# own arrival schedule measures response time instead, from when each
+# record was due.
+#
+# What is gated is the structural relationship, not the microseconds.
+# Absolute latency on a shared CI runner is noise; the invariant is not.
+# Response time is service time plus the wait, and a wait cannot be
+# negative, so response p99 >= service p99 must hold on every machine that
+# has ever existed. If it ever fails, the harness is measuring the wrong
+# clock and every latency number in docs/bench/latency.md is suspect.
+#
+# 100 steps is about ten seconds of wall time at 1x, which is what a paced
+# run costs by definition: it is supposed to wait.
+pace_log=$(mktemp -t basis_pace)
+"$BIN" synth "$pace_log" --steps 100 --lead-ms 400 >/dev/null
+paced=$("$BIN" replay "$pace_log" --speed 1 --json)
+rm -f "$pace_log"
+pace_speed=$(printf '%s' "$paced" | python3 -c 'import json,sys; print(json.load(sys.stdin)["pacing"]["speed"])' || true)
+svc_p99=$(printf '%s' "$paced" | python3 -c 'import json,sys; print(json.load(sys.stdin)["latency_us"]["p99"])' || true)
+rsp_p99=$(printf '%s' "$paced" | python3 -c 'import json,sys; print(json.load(sys.stdin)["response_us"]["p99"])' || true)
+omission=$(printf '%s' "$paced" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(1 if d["response_us"]["p99"] >= d["latency_us"]["p99"] else 0)' || true)
+echo "paced replay: service p99 ${svc_p99} us, response p99 ${rsp_p99} us"
+check "paced replay ran"     "$pace_speed" "v == 1"
+check "response >= service"  "$omission"   "v == 1"
+check "service p99 (us)"     "$svc_p99"    "v <= 20000"
+
 if [ "$failures" -gt 0 ]; then
   echo "perf gate: $failures check(s) failed"
   exit 1
