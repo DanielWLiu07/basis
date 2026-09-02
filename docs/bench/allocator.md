@@ -20,9 +20,23 @@ cmake --build build-bde -j
 ```
 
 That synthetic session is 724,298 records (124 MB) in real wire formats.
-The live capture referenced below is a 60 s Polymarket market-channel
-recording (877 records) used for allocation profiles only; it is too short
-for stable timing percentiles.
+The live capture referenced below is the committed 60 s Polymarket
+market-channel recording in this directory, 877 records. It is used for
+allocation profiles only: it is too short for stable timing, and the
+pipeline figures below all come from the synthetic session instead.
+
+```
+gunzip -c docs/bench/live-poly-60s.feedlog.gz > /tmp/live-poly-60s.feedlog
+./build/src/basis replay /tmp/live-poly-60s.feedlog \
+    --config configs/contracts.toml --alloc count
+```
+
+It was not committed until 2026-09-01, which made the live row here the
+one figure in docs/bench/ that nobody could check. `/captures/` is
+gitignored as large and regenerable, and this file was sitting in it, so
+the row was measured on an input that shipped no copy of itself. The
+repo's rule is that a figure is either measured on a committed capture or
+labelled as not yet measured, and this was neither. 85 KB gzipped.
 
 Modes, all via the same binary:
 

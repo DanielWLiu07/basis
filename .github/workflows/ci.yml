@@ -20,6 +20,12 @@ jobs:
       - name: Physical design (levelization)
         run: ./scripts/levelize.py src
 
+      - name: Benchmark inputs are committed
+        # A benchmark whose input is gitignored works perfectly for its
+        # author and for nobody else, and running it proves nothing -
+        # the only way to catch it is to ask whether the input ships.
+        run: python3 scripts/check_bench_inputs.py
+
       - name: Contracts script unit tests
         # Pure parsing and date arithmetic only. The network half is not
         # exercised here on purpose: a CI job that needs Polymarket to be
