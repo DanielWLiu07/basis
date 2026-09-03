@@ -46,8 +46,23 @@ Both sessions carry the identical update stream:
     64            16,409 /sec       109,208 /sec         6.7x
     256           19,705 /sec       116,136 /sec         5.9x
 
-Read the sync column first: it is pinned near 20,000 updates/sec at every
-fan-out size, which is exactly 1 / 50 microseconds. The publisher is not
+The two columns are not the same kind of number, and only one of them
+reproduces. The sync column is structural: it is pinned near 20,000
+updates/sec at every fan-out size because that is exactly 1 / 50
+microseconds, and it comes out there on any machine. The conflating column
+is a throughput, so it moves with load - three runs at 16 subscribers
+today measured 777k, 870k and 875k updates/sec, giving 39.9x, 43.6x and
+43.9x against the 45.9x tabulated here. Read the speedup as "roughly 40 to
+46x on this box", not as a constant.
+
+That distinction is worth making because the ratios elsewhere in this repo
+and its sibling are ratios of counts - triangles merged, bytes resident,
+allocations per message - and those are byte-identical across runs and
+across architectures. A ratio of two timings is not the same object, and
+quoting one to three significant figures implies a stability it does not
+have.
+
+Read the sync column first: The publisher is not
 slowed down by the number of subscribers, it is slowed down to the rate of
 the one slow handler. That is the coupling, and it is scale-free: a single
 consumer that takes a millisecond would cap the publisher at 1,000
