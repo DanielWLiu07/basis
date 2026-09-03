@@ -393,7 +393,8 @@ every figure traces to one command. Recorded so far:
   1 / 50 microseconds. `api::ConflatingSession` gives each subscriber one
   slot per topic instead of a queue, so publishers never wait on consumers
   and memory is bounded by subscribers times topics rather than by publish
-  rate. At 16 subscribers the publisher runs 46x faster (899k updates/sec),
+  rate. At 16 subscribers the publisher runs roughly 40 to 46x faster (777k to
+  899k updates/sec across runs; it is a throughput, so it moves with load),
   and every subscriber including the slow one ends holding the current
   value: conflation drops the stale middle, never the present. Joining is
   snapshot-then-stream: a consumer connecting mid-session is seeded with
