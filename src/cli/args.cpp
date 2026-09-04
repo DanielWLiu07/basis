@@ -33,18 +33,22 @@ std::string flag_string(const std::vector<std::string_view>& args,
   return fallback;
 }
 
-double flag_double(const std::vector<std::string_view>& args,
-                   std::string_view name, double fallback) {
-  for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+std::optional<double> flag_double(const std::vector<std::string_view>& args,
+                                  std::string_view name, double fallback) {
+  for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] != name) continue;
+    // Present as the final argument, so there is no value to read. Silently
+    // falling back here is what let `--speed` with no number look like a
+    // deliberate unpaced run.
+    if (i + 1 >= args.size()) return std::nullopt;
     const std::string text(args[i + 1]);
     try {
       std::size_t consumed = 0;
       const double v = std::stod(text, &consumed);
-      if (consumed != text.size()) return fallback;  // trailing junk
+      if (consumed != text.size()) return std::nullopt;  // trailing junk
       return v;
     } catch (...) {
-      return fallback;
+      return std::nullopt;
     }
   }
   return fallback;
