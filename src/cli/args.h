@@ -35,7 +35,12 @@ std::string flag_string(const std::vector<std::string_view>& args,
 // a rate, and every rate they accept is validated against its own bounds
 // right after, so a malformed value is caught there with a message that
 // names the flag.
-double flag_double(const std::vector<std::string_view>& args,
+// Returns nullopt when the flag is present but its value is not a
+// complete number, or when it is present with no value at all - the same
+// contract flag_value has, and for the same reason. It used to return the
+// fallback in both cases, so `--speed banana` silently produced an
+// unpaced replay: the one measurement that mode exists to correct.
+std::optional<double> flag_double(const std::vector<std::string_view>& args,
                    std::string_view name, double fallback);
 
 // Comma-separated flag values (--binance btcusdt,ethusdt).

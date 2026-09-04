@@ -121,11 +121,21 @@ int run_replay(const std::vector<std::string_view>& args) {
   // factor. 0 keeps the historical flat-out replay, which can only ever
   // report service time.
   const auto speed = flag_double(args, "--speed", 0.0);
+  if (!speed || *speed < 0.0 || *speed > 100000.0) {
+    basis::log::error("replay: --speed expects a non-negative number "
+                      "(0 replays flat out, 1 replays at the venue's rate)");
+    return usage();
+  }
   // How much of each pacing wait is spun instead of slept. Past the
   // capture's largest gap this spins every wait, which is what it takes
   // for the harness's own timer error to stop dominating a
   // microsecond-scale response time.
   const auto spin_ms = flag_double(args, "--pace-spin-ms", 2.0);
+  if (!spin_ms || *spin_ms < 0.0 || *spin_ms > 60000.0) {
+    basis::log::error("replay: --pace-spin-ms expects a non-negative number "
+                      "of milliseconds");
+    return usage();
+  }
   const auto episodes_csv_path = flag_string(args, "--episodes-csv", "");
 
   std::string error;
@@ -196,8 +206,8 @@ int run_replay(const std::vector<std::string_view>& args) {
   basis::bench::ReplayHarness harness(*registry, &session, {}, book_mr);
   harness.set_parse_arena(parse_arena);
   harness.set_breakdown(breakdown);
-  harness.set_replay_speed(speed);
-  harness.set_pace_spin_ns(static_cast<std::int64_t>(spin_ms * 1e6));
+  harness.set_replay_speed(*speed);
+  harness.set_pace_spin_ns(static_cast<std::int64_t>(*spin_ms * 1e6));
   const auto stats = harness.run(in_path, &error);
   if (!stats) {
     basis::log::error(error);
