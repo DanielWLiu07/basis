@@ -227,7 +227,7 @@ feed (Kalshi, Polymarket)  ->  normalize + match  ->  unified order book
                                          crossed-book economics net of fees
                                          and of reaction delay)
                                                             |
-                                          BLPAPI-style subscription API
+                                     BLPAPI-style subscription + request API
 
 matching engine (exec/)  ->  price-time priority book, Gtc/Ioc/Fok
                              cross-checks the analytics by executing
@@ -247,7 +247,23 @@ the parser buffer) and every allocation site draws from an injectable
 into those seams; measured against the global heap they came out at
 parity, because the zero-copy path leaves only 1-2 allocations per message
 (`docs/bench/allocator.md`), so the heap default ships. The consumer
-interface mirrors Bloomberg's BLPAPI subscription model. Internal
+interface mirrors both halves of Bloomberg's BLPAPI model.
+
+**Subscription** is push: a consumer names the topics it cares about and
+values arrive, conflated, so a slow one receives the current price rather
+than a backlog. **Request** is pull: it asks for a topic's current value
+and gets it immediately, which is what a screen needs when it opens
+instead of waiting for the next tick.
+
+Entitlements are enforced identically on both, which is the point rather
+than a detail - a pull path that skipped the check would be a way around
+it, and that is how licensed data leaks in practice. A refusal is also
+deliberately indistinguishable from a topic that does not exist, because
+"that exists but you may not see it" is itself an answer the caller was
+not entitled to, and telling them apart would let a caller enumerate the
+topic space. Both outcomes are counted, so "nobody was served what they
+should not have been" is evidenced rather than asserted.
+ Internal
 ingest-to-signal latency is measured by deterministic replay (network
 jitter removed) and reported in percentiles.
 
@@ -273,7 +289,7 @@ level 2  src/feed/       venue parsers (Kalshi, Polymarket, Binance, Coinbase),
                          cross-venue crypto instrument naming
          src/analytics/  divergence, cross-correlation and
                          Hayashi-Yoshida lead-lag, event study
-         src/api/        BLPAPI-style subscription interface
+         src/api/        BLPAPI-style interface: subscription + request
          src/exec/       price-time-priority matching engine, order index
          src/net/        TLS WebSocket client + Kalshi request signing
 
