@@ -23,9 +23,18 @@ spends its time on:
 
 On top of that it measures which venue's price moves first.
 
-**The measured result: across two 45 minute captures of Binance and
-Coinbase quoting BTC, a repricing on Binance is answered by Coinbase far
-more often than the reverse** - 0.577 against 0.264 in the first session
+**The measured result: a repricing on Binance is answered by Coinbase far
+more often than the reverse, and it now holds on two instruments at once.**
+A 29 minute capture carrying BTC and ETH quoted by both venues confirms
+the ordering separately on each, under identical market conditions: BTC at
+z = 5.19 and ETH at z = 9.43, with Binance's moves answered roughly four
+times as often as Coinbase's on both. The second instrument is a control
+on the first rather than a separate study, which is the strongest form
+this claim has taken.
+
+It also replicates across sessions. Across two earlier 45 minute captures
+of Binance and Coinbase quoting BTC, Binance was answered 0.577 of the
+time against Coinbase's 0.264 in the first session
 (z = 11.76, 204,864 messages) and 0.903 against 0.539 in a second session
 eight days later that was three times as busy (z = 39.33, 642,919
 messages). The ordering holds at every threshold from $0.25 to $2.00 in
