@@ -1,5 +1,7 @@
 #include "api/conflating_session.h"
 
+#include <optional>
+
 #include <algorithm>
 #include <utility>
 
@@ -171,6 +173,49 @@ void ConflatingSession::publish(const Update& update) {
   }
 }
 
+std::optional<Update> ConflatingSession::request(SubscriberId id,
+                                                 const std::string& event_id,
+                                                 const std::string& field) {
+  // Held for the whole call, unlike drain(), which deliberately releases
+  // it before running handlers. The asymmetry is intentional: drain
+  // invokes user code of unbounded duration and must not stall publishers
+  // behind it, whereas this is three hash lookups and a copy. It also has
+  // to hold the lock to read topic_ids_ and last_value_ safely, and the
+  // nesting order below - registry then subscriber - is the same order
+  // publish() uses, which is what keeps the two from deadlocking.
+  const std::lock_guard<std::mutex> lock(registry_mutex_);
+  if (stopped_ || id >= subscribers_.size()) {
+    ++requests_denied_;
+    return std::nullopt;
+  }
+
+  const auto it = topic_ids_.find(topic_key(event_id, field));
+  if (it == topic_ids_.end()) {
+    ++requests_denied_;
+    return std::nullopt;
+  }
+  const TopicId topic = it->second;
+
+  // Same check publish and drain make. Taken under the subscriber's own
+  // lock, consistent with the rest of the class.
+  Subscriber& sub = *subscribers_[id];
+  {
+    const std::lock_guard<std::mutex> sub_lock(sub.mutex);
+    if (!permitted_locked(sub, topic)) {
+      ++requests_denied_;
+      return std::nullopt;
+    }
+  }
+
+  const auto value = last_value_.find(topic);
+  if (value == last_value_.end()) {
+    ++requests_denied_;  // known topic, nothing published yet
+    return std::nullopt;
+  }
+  ++requests_served_;
+  return value->second;
+}
+
 std::size_t ConflatingSession::drain(SubscriberId id) {
   Subscriber* sub = nullptr;
   {
@@ -223,6 +268,8 @@ ConflatingSession::Stats ConflatingSession::stats() const {
   s.queued = queued_;
   s.subscriptions_denied = denied_;
   s.revocations = revocations_;
+  s.requests_denied = requests_denied_;
+  s.requests_served = requests_served_;
   for (const auto& sub : subscribers_) {
     const std::lock_guard<std::mutex> sub_lock(sub->mutex);
     s.delivered += sub->delivered;

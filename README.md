@@ -2,7 +2,26 @@
 
 A real-time, cross-venue market-data engine in C++20. It reads live order
 books from several venues over TLS WebSocket, normalizes them into one
-schema, and measures which venue's price moves first.
+schema, and serves them to consumers through a BLPAPI-style interface -
+subscription and request, both entitlement-checked.
+
+That is four pieces, and the middle two are the ones a market-data team
+spends its time on:
+
+  **feed handlers.** Four venue parsers behind one adapter seam, each
+  turning a venue's own dialect into one canonical delta. Sequence gaps
+  are detected and answered by dropping the book and re-requesting a
+  snapshot, because a book known to be stale must never be served.
+  **normalization.** Venue-native market ids disappear at the registry;
+  everything downstream is keyed by a venue-neutral event id.
+  **distribution.** Conflated fan-out, so a slow consumer receives the
+  current price rather than a backlog, with memory bounded by subscribers
+  times topics rather than by publish rate.
+  **entitlements.** Default-deny, granted per subscriber and per topic,
+  enforced identically on push and pull, with denials counted rather than
+  merely prevented.
+
+On top of that it measures which venue's price moves first.
 
 **The measured result: across two 45 minute captures of Binance and
 Coinbase quoting BTC, a repricing on Binance is answered by Coinbase far
@@ -227,7 +246,7 @@ feed (Kalshi, Polymarket)  ->  normalize + match  ->  unified order book
                                          crossed-book economics net of fees
                                          and of reaction delay)
                                                             |
-                                          BLPAPI-style subscription API
+                                     BLPAPI-style subscription + request API
 
 matching engine (exec/)  ->  price-time priority book, Gtc/Ioc/Fok
                              cross-checks the analytics by executing
@@ -247,7 +266,23 @@ the parser buffer) and every allocation site draws from an injectable
 into those seams; measured against the global heap they came out at
 parity, because the zero-copy path leaves only 1-2 allocations per message
 (`docs/bench/allocator.md`), so the heap default ships. The consumer
-interface mirrors Bloomberg's BLPAPI subscription model. Internal
+interface mirrors both halves of Bloomberg's BLPAPI model.
+
+**Subscription** is push: a consumer names the topics it cares about and
+values arrive, conflated, so a slow one receives the current price rather
+than a backlog. **Request** is pull: it asks for a topic's current value
+and gets it immediately, which is what a screen needs when it opens
+instead of waiting for the next tick.
+
+Entitlements are enforced identically on both, which is the point rather
+than a detail - a pull path that skipped the check would be a way around
+it, and that is how licensed data leaks in practice. A refusal is also
+deliberately indistinguishable from a topic that does not exist, because
+"that exists but you may not see it" is itself an answer the caller was
+not entitled to, and telling them apart would let a caller enumerate the
+topic space. Both outcomes are counted, so "nobody was served what they
+should not have been" is evidenced rather than asserted.
+ Internal
 ingest-to-signal latency is measured by deterministic replay (network
 jitter removed) and reported in percentiles.
 
@@ -273,7 +308,7 @@ level 2  src/feed/       venue parsers (Kalshi, Polymarket, Binance, Coinbase),
                          cross-venue crypto instrument naming
          src/analytics/  divergence, cross-correlation and
                          Hayashi-Yoshida lead-lag, event study
-         src/api/        BLPAPI-style subscription interface
+         src/api/        BLPAPI-style interface: subscription + request
          src/exec/       price-time-priority matching engine, order index
          src/net/        TLS WebSocket client + Kalshi request signing
 
@@ -372,6 +407,19 @@ every figure traces to one command. Recorded so far:
   integrity counters zero, allocation budget held, throughput floor with
   10x headroom. It reads `replay --json`, so a change to the human report
   format cannot silently break the gate.
+The failure this exists for is not a socket that errors. It is one that
+does not: a peer or a middlebox that vanishes without a FIN or an RST
+leaves a blocking read parked forever, and the reconnect path is driven by
+read errors, so it never runs. That is not hypothetical here - a 45 minute
+capture has Coinbase going silent 19 minutes in and staying silent for the
+remaining 25, with **zero reconnects logged**, while Binance recovered
+twice over the same outage because its server does close connections.
+Beast's own `stream_base::timeout` does not cover it: those settings apply
+to asynchronous operations and this client reads synchronously, and
+`keep_alive_pings` has no effect while `idle_timeout` is `none`, which is
+the client-role default. So the guard is external - a watchdog thread that
+breaks the read the same way `stop()` does.
+
 - `tests/test_reconnect.cpp` runs in CI on every commit: 4 forced
   mid-subscription TCP drops against a fault-injecting local server, and
   the feed stack must rebuild the book to ground truth with every drop

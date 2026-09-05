@@ -519,3 +519,123 @@ TEST(ConflatingSession, EntitlementCountersAreExactUnderConcurrentDrains) {
   EXPECT_EQ(st.queued, static_cast<std::uint64_t>(kUpdates) * 4);
   EXPECT_EQ(st.queued, st.delivered + st.conflated);
 }
+
+// ---- request/response: the other half of the BLPAPI model ----------------
+
+// Push tells you what changed. Pull tells you what is true now. A consumer
+// opening a screen needs both, and with only the push half a late joiner
+// waits for the next tick or subscribes to something it does not want.
+TEST(ConflatingSession, RequestReturnsTheCurrentValueWithoutSubscribing) {
+  ConflatingSession s;
+  const auto sub = s.add_subscriber();
+  s.publish(tick("fed", "mid", 47.0));
+
+  const auto got = s.request(sub, "fed", "mid");
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->value, 47.0);
+  EXPECT_EQ(s.stats().requests_served, 1u);
+
+  // Pull must not disturb push. Nothing was subscribed, so nothing is
+  // pending, and a later drain has nothing to deliver.
+  EXPECT_EQ(s.drain(sub), 0u);
+}
+
+TEST(ConflatingSession, RequestSeesTheLatestValueNotTheFirst) {
+  ConflatingSession s;
+  const auto sub = s.add_subscriber();
+  s.publish(tick("fed", "mid", 10.0));
+  s.publish(tick("fed", "mid", 20.0));
+  s.publish(tick("fed", "mid", 30.0));
+  const auto got = s.request(sub, "fed", "mid");
+  ASSERT_TRUE(got.has_value());
+  EXPECT_DOUBLE_EQ(got->value, 30.0);
+}
+
+// The reason this surface is dangerous to add carelessly. A request path
+// that skipped the entitlement check would be a way around it, which is
+// how licensed data leaks in practice.
+TEST(ConflatingSession, RequestIsSubjectToTheSameEntitlementsAsPush) {
+  ConflatingSession s;
+  s.set_entitlements(ConflatingSession::Entitlements::Restricted);
+  const auto allowed = s.add_subscriber();
+  const auto denied = s.add_subscriber();
+  s.grant(allowed, "fed", "mid");
+  s.publish(tick("fed", "mid", 47.0));
+
+  EXPECT_TRUE(s.request(allowed, "fed", "mid").has_value());
+  EXPECT_FALSE(s.request(denied, "fed", "mid").has_value());
+  EXPECT_EQ(s.stats().requests_denied, 1u);
+}
+
+// A refusal must not leak existence. "That topic exists but you may not
+// see it" is itself an answer the caller was not entitled to, so an
+// unentitled request and an unknown topic are indistinguishable from
+// outside - which is what stops a caller enumerating the topic space.
+TEST(ConflatingSession, ADeniedRequestIsIndistinguishableFromAMissingOne) {
+  ConflatingSession s;
+  s.set_entitlements(ConflatingSession::Entitlements::Restricted);
+  const auto sub = s.add_subscriber();
+  s.publish(tick("fed", "mid", 47.0));
+
+  const auto not_entitled = s.request(sub, "fed", "mid");
+  const auto never_existed = s.request(sub, "no-such-event", "mid");
+  EXPECT_FALSE(not_entitled.has_value());
+  EXPECT_FALSE(never_existed.has_value());
+  // Both counted as denials, so the refusal is auditable even though the
+  // caller cannot tell which kind it was.
+  EXPECT_EQ(s.stats().requests_denied, 2u);
+}
+
+// Revocation has to reach this path too, or a revoked subscriber could
+// keep pulling what it can no longer be pushed.
+TEST(ConflatingSession, RevocationTakesEffectOnRequestsImmediately) {
+  ConflatingSession s;
+  s.set_entitlements(ConflatingSession::Entitlements::Restricted);
+  const auto sub = s.add_subscriber();
+  s.grant(sub, "fed", "mid");
+  s.publish(tick("fed", "mid", 47.0));
+  EXPECT_TRUE(s.request(sub, "fed", "mid").has_value());
+
+  s.revoke(sub, "fed", "mid");
+  EXPECT_FALSE(s.request(sub, "fed", "mid").has_value());
+}
+
+// Pull under concurrent push. request() nests the subscriber lock inside
+// the registry lock, which is the order publish() uses; drain() takes them
+// sequentially instead. This exercises all three against each other, since
+// a lock-order inversion between them would be a deadlock rather than a
+// wrong answer, and a wrong answer is what a single-threaded test finds.
+TEST(ConflatingSession, RequestIsSafeUnderConcurrentPublishAndDrain) {
+  ConflatingSession s;
+  const auto sub = s.add_subscriber();
+  s.subscribe_for(sub, "fed", "mid", [](const Update&) {});
+
+  std::atomic<bool> stop{false};
+  std::atomic<std::uint64_t> served{0};
+
+  std::thread publisher([&] {
+    for (int i = 0; i < 20000 && !stop.load(); ++i) {
+      s.publish(tick("fed", "mid", static_cast<double>(i)));
+    }
+  });
+  std::thread drainer([&] {
+    while (!stop.load()) s.drain(sub);
+  });
+  std::thread requester([&] {
+    for (int i = 0; i < 20000; ++i) {
+      if (s.request(sub, "fed", "mid").has_value()) served.fetch_add(1);
+    }
+  });
+
+  requester.join();
+  publisher.join();
+  stop.store(true);
+  drainer.join();
+  s.drain(sub);
+
+  // The point is that it terminates and the counters stay coherent; the
+  // exact value read is whatever was current at that instant.
+  EXPECT_GT(served.load(), 0u);
+  const auto st = s.stats();
+  EXPECT_EQ(st.requests_served + st.requests_denied, 20000u);
+}

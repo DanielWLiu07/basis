@@ -63,6 +63,19 @@ This is the largest piece of work on the list and the one furthest from
 what exists. It is also the only one that would add a capability the repo
 does not gesture at anywhere else.
 
+## Closed since this was written
+
+**The request half of BLPAPI.** The consumer interface had subscription
+and not request; it now has both, entitlement-checked identically, with a
+refusal deliberately indistinguishable from a topic that does not exist.
+That was listed as the highest-leverage addition for a market-data reader
+and it took a day.
+
+**Whether a short capture can stand in for a long one.**
+`docs/bench/extrapolation.md`. The median can, the tail cannot, and the
+gap is a factor of 63 - which retroactively justifies every percentile in
+this directory coming from the thirty-minute and four-hour captures.
+
 ## What is explicitly not on the list
 
 **Kafka, for replay or event streaming.** Considered and rejected on

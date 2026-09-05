@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -58,6 +59,9 @@ class ConflatingSession final : public Session {
     std::uint64_t subscriptions_denied = 0;
     std::uint64_t withheld = 0;     // values not delivered, not entitled
     std::uint64_t revocations = 0;
+    // Requests refused: unknown topic or not entitled, not told apart.
+    std::uint64_t requests_denied = 0;
+    std::uint64_t requests_served = 0;
   };
 
   // Market data is licensed, and who may see which topic is enforced
@@ -120,6 +124,28 @@ class ConflatingSession final : public Session {
   // Engine side. Slots the update for every subscriber of the topic and
   // returns. Never invokes a handler, never blocks on a consumer.
   void publish(const Update& update);
+
+  // The other half of the BLPAPI model. Subscription is push: you say what
+  // you care about and values arrive. Request is pull: you ask for the
+  // current value of a topic and get it now, without subscribing.
+  //
+  // A consumer opening a screen wants both - the present image immediately,
+  // then updates as they happen - and having only the push half means a
+  // late joiner either waits for the next tick or subscribes to something
+  // it does not want to keep.
+  //
+  // Entitlements are enforced here identically to publish and drain, which
+  // is the point rather than a detail: a request surface that skipped the
+  // check would be a way around it, and that is the classic way licensed
+  // data leaks. `requests_denied` counts refusals for the same reason the
+  // other counters exist.
+  //
+  // Returns nullopt for a topic that has no value yet AND for one this
+  // subscriber may not see, deliberately not distinguishing them. Telling
+  // a caller "that exists but you cannot have it" tells them it exists,
+  // which is an answer they were not entitled to either.
+  std::optional<Update> request(SubscriberId id, const std::string& event_id,
+                                const std::string& field);
 
   // Consumer side: delivers each topic's latest value to this subscriber's
   // handlers and clears its pending set. Call it from the subscriber's own
@@ -194,6 +220,8 @@ class ConflatingSession final : public Session {
   std::uint64_t queued_ = 0;
   std::uint64_t denied_ = 0;
   std::uint64_t revocations_ = 0;
+  std::uint64_t requests_denied_ = 0;
+  std::uint64_t requests_served_ = 0;
 
   // Caller holds `sub`'s own mutex. Open mode permits everything.
   bool permitted_locked(const Subscriber& sub, TopicId topic) const;
