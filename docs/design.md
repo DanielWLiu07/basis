@@ -100,6 +100,24 @@ ingest-to-signal latency PLAN.md talks about.
 
 ### normalize
 
+The registry is **reference data**, and the distinction from market data
+is worth naming because the two have opposite properties and the code
+treats them differently.
+
+Market data streams, changes constantly, and is worthless once superseded
+- which is why the distribution layer conflates it, keeping one slot per
+topic rather than a queue. Reference data is the static description of
+what an instrument *is*: which Kalshi ticker and which Polymarket token id
+denote the same real-world outcome, what a basket's members are, what
+resolution wording they share. It changes rarely, it is loaded once at
+startup rather than streamed, and a consumer needs it to interpret
+anything the market-data side sends.
+
+They also fail differently. A stale quote is obvious - the timestamp says
+so. Stale reference data is not: a resolved contract and a quiet market
+both produce zero messages, which is exactly the failure
+`scripts/contracts.py` exists to make loud.
+
 - `TomlContractRegistry` reads `configs/contracts.toml`. It parses only the
   subset the registry needs ([[event]] tables of key = "string" pairs), which
   keeps a TOML library out of the dependency set. Unknown keys are ignored;
