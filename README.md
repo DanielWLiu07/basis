@@ -407,6 +407,19 @@ every figure traces to one command. Recorded so far:
   integrity counters zero, allocation budget held, throughput floor with
   10x headroom. It reads `replay --json`, so a change to the human report
   format cannot silently break the gate.
+The failure this exists for is not a socket that errors. It is one that
+does not: a peer or a middlebox that vanishes without a FIN or an RST
+leaves a blocking read parked forever, and the reconnect path is driven by
+read errors, so it never runs. That is not hypothetical here - a 45 minute
+capture has Coinbase going silent 19 minutes in and staying silent for the
+remaining 25, with **zero reconnects logged**, while Binance recovered
+twice over the same outage because its server does close connections.
+Beast's own `stream_base::timeout` does not cover it: those settings apply
+to asynchronous operations and this client reads synchronously, and
+`keep_alive_pings` has no effect while `idle_timeout` is `none`, which is
+the client-role default. So the guard is external - a watchdog thread that
+breaks the read the same way `stop()` does.
+
 - `tests/test_reconnect.cpp` runs in CI on every commit: 4 forced
   mid-subscription TCP drops against a fault-injecting local server, and
   the feed stack must rebuild the book to ground truth with every drop
