@@ -2,7 +2,26 @@
 
 A real-time, cross-venue market-data engine in C++20. It reads live order
 books from several venues over TLS WebSocket, normalizes them into one
-schema, and measures which venue's price moves first.
+schema, and serves them to consumers through a BLPAPI-style interface -
+subscription and request, both entitlement-checked.
+
+That is four pieces, and the middle two are the ones a market-data team
+spends its time on:
+
+  **feed handlers.** Four venue parsers behind one adapter seam, each
+  turning a venue's own dialect into one canonical delta. Sequence gaps
+  are detected and answered by dropping the book and re-requesting a
+  snapshot, because a book known to be stale must never be served.
+  **normalization.** Venue-native market ids disappear at the registry;
+  everything downstream is keyed by a venue-neutral event id.
+  **distribution.** Conflated fan-out, so a slow consumer receives the
+  current price rather than a backlog, with memory bounded by subscribers
+  times topics rather than by publish rate.
+  **entitlements.** Default-deny, granted per subscriber and per topic,
+  enforced identically on push and pull, with denials counted rather than
+  merely prevented.
+
+On top of that it measures which venue's price moves first.
 
 **The measured result: across two 45 minute captures of Binance and
 Coinbase quoting BTC, a repricing on Binance is answered by Coinbase far
