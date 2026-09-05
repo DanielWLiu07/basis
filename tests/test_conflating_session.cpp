@@ -599,3 +599,43 @@ TEST(ConflatingSession, RevocationTakesEffectOnRequestsImmediately) {
   s.revoke(sub, "fed", "mid");
   EXPECT_FALSE(s.request(sub, "fed", "mid").has_value());
 }
+
+// Pull under concurrent push. request() nests the subscriber lock inside
+// the registry lock, which is the order publish() uses; drain() takes them
+// sequentially instead. This exercises all three against each other, since
+// a lock-order inversion between them would be a deadlock rather than a
+// wrong answer, and a wrong answer is what a single-threaded test finds.
+TEST(ConflatingSession, RequestIsSafeUnderConcurrentPublishAndDrain) {
+  ConflatingSession s;
+  const auto sub = s.add_subscriber();
+  s.subscribe_for(sub, "fed", "mid", [](const Update&) {});
+
+  std::atomic<bool> stop{false};
+  std::atomic<std::uint64_t> served{0};
+
+  std::thread publisher([&] {
+    for (int i = 0; i < 20000 && !stop.load(); ++i) {
+      s.publish(tick("fed", "mid", static_cast<double>(i)));
+    }
+  });
+  std::thread drainer([&] {
+    while (!stop.load()) s.drain(sub);
+  });
+  std::thread requester([&] {
+    for (int i = 0; i < 20000; ++i) {
+      if (s.request(sub, "fed", "mid").has_value()) served.fetch_add(1);
+    }
+  });
+
+  requester.join();
+  publisher.join();
+  stop.store(true);
+  drainer.join();
+  s.drain(sub);
+
+  // The point is that it terminates and the counters stay coherent; the
+  // exact value read is whatever was current at that instant.
+  EXPECT_GT(served.load(), 0u);
+  const auto st = s.stats();
+  EXPECT_EQ(st.requests_served + st.requests_denied, 20000u);
+}

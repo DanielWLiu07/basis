@@ -176,6 +176,13 @@ void ConflatingSession::publish(const Update& update) {
 std::optional<Update> ConflatingSession::request(SubscriberId id,
                                                  const std::string& event_id,
                                                  const std::string& field) {
+  // Held for the whole call, unlike drain(), which deliberately releases
+  // it before running handlers. The asymmetry is intentional: drain
+  // invokes user code of unbounded duration and must not stall publishers
+  // behind it, whereas this is three hash lookups and a copy. It also has
+  // to hold the lock to read topic_ids_ and last_value_ safely, and the
+  // nesting order below - registry then subscriber - is the same order
+  // publish() uses, which is what keeps the two from deadlocking.
   const std::lock_guard<std::mutex> lock(registry_mutex_);
   if (stopped_ || id >= subscribers_.size()) {
     ++requests_denied_;
