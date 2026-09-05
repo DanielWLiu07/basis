@@ -15,7 +15,7 @@ companion voxel-engine project follows. No aspirational numbers.
 | [`book_reconstruction.md`](book_reconstruction.md) | Reconstructing a book, and proving it is the venue's book | btcusdt-recon |
 | [`cross_venue_lead.md`](cross_venue_lead.md) | Cross-venue lead: Binance against Coinbase | btc-xvenue, btc-xvenue-2 |
 | [`economics.md`](economics.md) | Crossed-book economics: methodology and numbers | synthetic |
-| [`extrapolation.md`](extrapolation.md) | Can a short capture stand in for a long one? | soak.feedlog |
+| [`extrapolation.md`](extrapolation.md) | Can a short capture stand in for a long one? | soak |
 | [`fanout.md`](fanout.md) | Subscription fan-out with slow consumers | synthetic |
 | [`ingest.md`](ingest.md) | Ingest throughput on a venue that produces load | binance-90s |
 | [`latency.md`](latency.md) | Ingest-to-signal latency on a recorded live session | live-poly-30min |

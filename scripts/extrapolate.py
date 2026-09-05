@@ -12,6 +12,13 @@ does not is one you may only quote from a run at least as long as the
 thing you are claiming, and saying which is which is the point.
 
     scripts/extrapolate.py <capture.feedlog> [--window-min 30]
+
+Result on the committed four-hour soak, written up in
+docs/bench/extrapolation.md: the median extrapolates from a ten-minute
+window within 5.3%, and the 99th percentile does not - one window reported
+1.21 us against a true 76.46, off by a factor of 63 in the direction that
+flatters. The rule that follows is that a short run may be quoted for the
+median and for ratios of counts, and for nothing else.
 """
 
 import argparse
