@@ -308,3 +308,44 @@ Capture your own with `basis record --binance ... --coinbase ...` (both
 sockets, one process, one clock). Numbers will differ with the venue's activity and with your own
 network distance to each venue, which is the point of the bias section
 above.
+
+## A second instrument, and the threshold bug it exposed
+
+Measured 2026-09-05 on `btc-eth-xvenue.feedlog.gz`: 29 minutes, 122,445
+records, BTC and ETH quoted by both venues over the same window.
+
+    gunzip -c docs/bench/btc-eth-xvenue.feedlog.gz > /tmp/x.feedlog
+    ./build/src/basis xvenue-lead /tmp/x.feedlog --move-bps 0.126
+
+| instrument | threshold | Binance moves answered | Coinbase moves answered | z |
+|:--|--:|--:|--:|--:|
+| BTC/USD | $1.00 | 27 / 58 = 0.466 | 17 / 136 = 0.125 | **5.19** |
+| ETH/USD | $0.031 | 63 / 117 = 0.538 | 67 / 484 = 0.138 | **9.43** |
+
+Both confirm the ordering, in the same capture, under identical market
+conditions. That is the strongest form this claim has taken: the second
+instrument is not a separate study run on a different afternoon, it is a
+control on the first.
+
+The first attempt found nothing on ETH - four qualifying moves in 29
+minutes against BTC's 58 - and the reason was a defect in this
+methodology rather than in the market.
+
+`--move-cents 100` asks whether a venue repriced by a dollar. BTC traded
+at $79,613 in this window and ETH at $2,455, so the same dollar is
+0.0013% of one instrument and 0.041% of the other: a 32x difference in
+what counts as a move. The two instruments were being asked different
+questions and nothing in the output said so.
+
+`--move-bps` states the threshold relative to the instrument's own price,
+resolved against its median mid so a single outlier quote cannot set the
+scale. 0.126 bp is what the old $1.00 default works out to on BTC, which
+is why the BTC column above is unchanged and the ETH one went from 4 moves
+to 117. The applied threshold is printed per instrument, because a
+cross-instrument comparison is only meaningful if a reader can check that
+both sides were asked the same relative question.
+
+The general lesson is worth more than the fix: an absolute threshold
+applied across instruments of different price does not fail loudly. It
+reports a smaller sample and a weaker result, which reads as the market
+being quiet rather than as the measurement being wrong.

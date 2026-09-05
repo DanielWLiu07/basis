@@ -51,7 +51,7 @@ int usage() {
       "      the venue's own message rate alongside it\n"
       "\n"
       "  basis xvenue-lead <capture.feedlog> [--grid-ms N] [--max-lag-bins N]\n"
-      "      [--move-cents C] [--follow-ms MS] [--sample-ms MS]\n"
+      "      [--move-cents C] [--move-bps B] [--follow-ms MS] [--sample-ms MS]\n"
       "      [--instrument BASE/USD] [--hy-step-ms N] [--hy-max-lag-ms N]\n"
       "      [--hy-curve <out.csv>]\n"
       "      which venue moves first, by cross-correlation, by event\n"

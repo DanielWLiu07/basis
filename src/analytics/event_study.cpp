@@ -89,7 +89,22 @@ void EventStudyEstimator::observe(double a_mid, double b_mid,
 
 EventStudyResult EventStudyEstimator::estimate() const {
   EventStudyResult result;
+  result.move_cents_applied = config_.move_cents;
   if (samples_.size() < 2) return result;
+
+  // Resolve a relative threshold against this instrument's own price
+  // level, using the median rather than the first or mean mid so one
+  // outlier quote cannot set the scale for the whole study.
+  double move_cents = config_.move_cents;
+  if (config_.move_bps > 0.0) {
+    std::vector<double> mids;
+    mids.reserve(samples_.size());
+    for (const auto& s : samples_) mids.push_back(s.a);
+    const std::size_t mid = mids.size() / 2;
+    std::nth_element(mids.begin(), mids.begin() + mid, mids.end());
+    move_cents = mids[mid] * config_.move_bps / 10'000.0;
+  }
+  result.move_cents_applied = move_cents;
 
   std::vector<double> a(samples_.size());
   std::vector<double> b(samples_.size());
@@ -100,9 +115,9 @@ EventStudyResult EventStudyEstimator::estimate() const {
     ts[i] = samples_[i].ts_ns;
   }
 
-  scan(a, b, ts, config_.move_cents, config_.follow_window_ns, &result.moves,
+  scan(a, b, ts, move_cents, config_.follow_window_ns, &result.moves,
        &result.followed, &result.median_follow_seconds);
-  scan(b, a, ts, config_.move_cents, config_.follow_window_ns,
+  scan(b, a, ts, move_cents, config_.follow_window_ns,
        &result.reverse_moves, &result.reverse_followed,
        &result.reverse_median_follow_seconds);
   return result;
