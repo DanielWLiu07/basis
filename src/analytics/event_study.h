@@ -9,9 +9,27 @@ namespace basis::analytics {
 struct EventStudyConfig {
   double move_cents = 1.0;              // a repricing, not book noise
   std::int64_t follow_window_ns = 10'000'000'000;  // 10 s to answer
+
+  // A relative threshold, in basis points of the instrument's own price.
+  // Zero keeps the absolute move_cents above.
+  //
+  // This exists because an absolute threshold is not comparable across
+  // instruments, and the failure is silent. Running BTC at $79,613 and ETH
+  // at $2,455 in one capture with move_cents = 100 asks whether each venue
+  // repriced by 0.0013% of BTC or 0.041% of ETH - a 32x difference in what
+  // counts as a move. The BTC side found 58 moves and the ETH side found
+  // 4, and nothing in the output said the two were being asked different
+  // questions. Set in bps, both are asked the same one.
+  double move_bps = 0.0;
 };
 
 struct EventStudyResult {
+  // The threshold actually applied, in cents. Equal to config.move_cents
+  // in absolute mode; resolved from the instrument's median price in bps
+  // mode. Reported so a cross-instrument comparison can be checked rather
+  // than assumed to be like-for-like.
+  double move_cents_applied = 0.0;
+
   // Venue A moves, venue B follows in the same direction within the
   // window. median_follow_seconds is over the followed moves only.
   std::uint64_t moves = 0;

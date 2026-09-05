@@ -47,6 +47,7 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   // between 1c and 99c and pure noise on one quoting around $63,000; a
   // dollar is roughly one tick of genuine movement in BTC.
   std::int64_t move_cents = 100;
+  double move_bps = 0.0;
   std::int64_t follow_ms = 2000;
   // Observe both venues on one clock rather than on every message.
   //
@@ -73,12 +74,23 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   // argmax of this curve, and a reader should be able to see whether that
   // argmax sits on a peak or on a plateau.
   const std::string hy_curve_path(flag_string(args, "--hy-curve", ""));
+  // Fractional, because a repricing on a $79,000 instrument is a fraction
+  // of one basis point: the $1.00 default works out to 0.126 bp of BTC.
+  // Parsed with flag_double rather than in the integer loop below for
+  // that reason.
+  const auto move_bps_opt = flag_double(args, "--move-bps", 0.0);
+  if (!move_bps_opt || *move_bps_opt < 0.0) {
+    basis::log::error("xvenue-lead: --move-bps expects a non-negative number");
+    return usage();
+  }
+  move_bps = *move_bps_opt;
   for (std::size_t i = 1; i + 1 < args.size(); i += 2) {
     const auto v = parse_int(args[i + 1]);
     if (!v) continue;
     if (args[i] == "--grid-ms") grid_ms = *v;
     else if (args[i] == "--max-lag-bins") max_lag_bins = static_cast<int>(*v);
     else if (args[i] == "--move-cents") move_cents = *v;
+
     else if (args[i] == "--follow-ms") follow_ms = *v;
     else if (args[i] == "--sample-ms") sample_ms = *v;
     else if (args[i] == "--hy-step-ms") hy_step_ms = *v;
@@ -108,7 +120,8 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
   cfg.max_lag_bins = max_lag_bins;
   const basis::analytics::EventStudyConfig evcfg{
       .move_cents = static_cast<double>(move_cents),
-      .follow_window_ns = follow_ms * 1'000'000};
+      .follow_window_ns = follow_ms * 1'000'000,
+      .move_bps = static_cast<double>(move_bps)};
   basis::analytics::HayashiYoshidaConfig hycfg;
   hycfg.lag_step_ns = hy_step_ms * 1'000'000;
   hycfg.max_lag_steps = static_cast<int>(hy_max_lag_ms / hy_step_ms);
@@ -247,11 +260,12 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
               span_s, u(records), u(malformed), u(unrepresentable),
               u(unpaired), u(single_venue), instruments.size());
   std::printf("XVENUE grid_ms=%lld max_lag_bins=%d sample_ms=%lld "
-              "event_move_cents=%lld follow_window_ms=%lld "
+              "event_move_cents=%lld event_move_bps=%.3f follow_window_ms=%lld "
               "hy_step_ms=%lld hy_max_lag_ms=%lld\n",
               static_cast<long long>(grid_ms), max_lag_bins,
               static_cast<long long>(sample_ms),
               static_cast<long long>(move_cents),
+              move_bps,
               static_cast<long long>(follow_ms),
               static_cast<long long>(hy_step_ms),
               static_cast<long long>(hy_max_lag_ms));
@@ -284,6 +298,11 @@ int run_xvenue_lead_cmd(const std::vector<std::string_view>& args) {
                 "hy_ratio_ci_high=%.3f hy_ratio_resolved=%d\n",
                 n, hyrep.ratio, hyrep.ratio_ci_low, hyrep.ratio_ci_high,
                 hyrep.ratio_resolved() ? 1 : 0);
+    // The threshold actually applied. In bps mode it differs per
+    // instrument, and a cross-instrument comparison is only meaningful if
+    // a reader can see that both were asked the same relative question.
+    std::printf("XVENUE instrument=%s move_threshold_cents=%.2f\n",
+                n, evr.move_cents_applied);
     std::printf("XVENUE instrument=%s binance_moves=%llu answered=%llu "
                 "rate=%.3f median_follow_ms=%.1f\n",
                 n, u(evr.moves), u(evr.followed), evr.forward_follow_rate(),
