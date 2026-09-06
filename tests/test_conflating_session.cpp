@@ -635,7 +635,14 @@ TEST(ConflatingSession, RequestIsSafeUnderConcurrentPublishAndDrain) {
 
   // The point is that it terminates and the counters stay coherent; the
   // exact value read is whatever was current at that instant.
-  EXPECT_GT(served.load(), 0u);
+  //
+  // Deliberately no assertion on `served`. Whether a request finds a value
+  // depends on whether it beat the drainer to the slot, and the drainer here
+  // is a tight loop emptying it - so "at least one of 20,000 requests won"
+  // is a statement about the scheduler, not about this code. It held on
+  // developer machines and failed once under the BDE allocators on a loaded
+  // runner. That request() returns a present value is pinned deterministically
+  // by RequestReturnsTheCurrentValueWithoutSubscribing.
   const auto st = s.stats();
   EXPECT_EQ(st.requests_served + st.requests_denied, 20000u);
 }
