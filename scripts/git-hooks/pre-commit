@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks a commit that would introduce private key material.
+# Enable in a fresh clone with:  git config core.hooksPath scripts/git-hooks
+exec python3 "$(git rev-parse --show-toplevel)/scripts/check_no_secrets.py" --staged

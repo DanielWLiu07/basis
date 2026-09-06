@@ -22,3 +22,10 @@ cmake-build-*/
 .env
 *.local.toml
 secrets/
+
+# Key material, wherever it lands (secrets/ above covers the path;
+# these cover a key pasted somewhere else by accident)
+*.pem
+*.key
+*.p12
+*.pfx

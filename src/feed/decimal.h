@@ -73,4 +73,26 @@ inline bool to_scaled_size(std::string_view text, std::int64_t* out) {
   return true;
 }
 
+// Kalshi quotes contract counts, and since its 2026 wire change they arrive
+// as decimal strings that can be fractional and signed: `delta_fp` is
+// "-2.83" when a resting size shrinks. Rounds to the nearest whole
+// contract, which is the unit the rest of the engine counts Kalshi depth
+// in - deliberately not kSizeScale, because a Kalshi contract is a countable
+// thing, not a fractional base unit like a Binance quantity.
+inline bool to_rounded_contracts(std::string_view text, std::int64_t* out) {
+  if (text.empty()) return false;
+  char buf[64];
+  if (text.size() >= sizeof(buf)) return false;
+  std::memcpy(buf, text.data(), text.size());
+  buf[text.size()] = '\0';
+  char* end = nullptr;
+  const double value = std::strtod(buf, &end);
+  if (end != buf + text.size()) return false;
+  if (!std::isfinite(value)) return false;
+  const double rounded = std::nearbyint(value);
+  if (std::fabs(rounded) > 9.0e18) return false;
+  *out = static_cast<std::int64_t>(rounded);
+  return true;
+}
+
 }  // namespace basis::feed
