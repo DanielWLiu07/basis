@@ -185,3 +185,91 @@ TEST(KalshiParser, MalformedInputIsFlaggedNotDropped) {
   EXPECT_EQ(r.status, ParseStatus::Malformed);
   EXPECT_TRUE(r.deltas.empty());
 }
+
+// --- The 2026 wire change -------------------------------------------------
+//
+// Kalshi moved orderbook_delta from integer cents to decimal dollar strings
+// and renamed every price/size field. These pin the new shape, the old one,
+// and the failure that hid the change: a snapshot whose side keys are gone
+// used to parse as a legal empty book, so the venue could restructure its
+// wire format and every integrity counter would still read zero.
+
+constexpr std::string_view kSnapshotDollars = R"({
+  "type": "orderbook_snapshot", "sid": 1, "seq": 10,
+  "msg": {
+    "market_ticker": "FED-26SEP-CUT",
+    "yes_dollars_fp": [["0.4500", "100.00"], ["0.4400", "250.40"]],
+    "no_dollars_fp":  [["0.5300", "80.00"]]
+  }
+})";
+
+TEST(KalshiParser, DollarSnapshotMatchesTheIntegerForm) {
+  KalshiParser p;
+  const auto r = p.parse(kSnapshotDollars, 1000);
+  ASSERT_EQ(r.status, ParseStatus::Ok);
+  ASSERT_EQ(r.deltas.size(), 4u);  // clear + 2 yes + 1 no
+
+  OrderBook book;
+  for (const auto& d : r.deltas) book.apply(d);
+  EXPECT_EQ(*book.best_bid(), 45);
+  EXPECT_EQ(*book.best_ask(), 47);  // NO 53 folds to YES 100 - 53
+  // "250.40" contracts rounds to the nearest whole contract, not truncated.
+  EXPECT_EQ(r.deltas[2].size, 250);
+}
+
+TEST(KalshiParser, DollarDeltaCarriesASignedFractionalSize) {
+  KalshiParser p;
+  ASSERT_EQ(p.parse(kSnapshotDollars, 1000).status, ParseStatus::Ok);
+  constexpr std::string_view kDelta = R"({
+    "type": "orderbook_delta", "sid": 1, "seq": 11,
+    "msg": {"market_ticker": "FED-26SEP-CUT", "price_dollars": "0.4500",
+            "delta_fp": "-2.83", "side": "yes"}
+  })";
+  const auto r = p.parse(kDelta, 2000);
+  ASSERT_EQ(r.status, ParseStatus::Ok);
+  ASSERT_EQ(r.deltas.size(), 1u);
+  EXPECT_EQ(r.deltas[0].price_cents, 45);
+  EXPECT_EQ(r.deltas[0].side, Side::Bid);
+  EXPECT_EQ(r.deltas[0].size, -3);  // -2.83 rounds away from zero to -3
+}
+
+TEST(KalshiParser, SnapshotWithNoRecognisedSideKeyIsMalformed) {
+  // The regression this whole change exists for. An empty Kalshi book still
+  // sends its side keys holding empty arrays, so keys missing entirely means
+  // an unrecognised schema - which must be loud, not an empty book.
+  KalshiParser p;
+  constexpr std::string_view kUnknown = R"({
+    "type": "orderbook_snapshot", "sid": 1, "seq": 10,
+    "msg": {"market_ticker": "FED-26SEP-CUT",
+            "yes_someday_fp": [["0.4500", "100.00"]]}
+  })";
+  const auto r = p.parse(kUnknown, 1000);
+  EXPECT_EQ(r.status, ParseStatus::Malformed);
+  EXPECT_TRUE(r.deltas.empty());
+}
+
+TEST(KalshiParser, EmptySidesAreStillALegalEmptyBook) {
+  KalshiParser p;
+  constexpr std::string_view kEmpty = R"({
+    "type": "orderbook_snapshot", "sid": 1, "seq": 10,
+    "msg": {"market_ticker": "FED-26SEP-CUT",
+            "yes_dollars_fp": [], "no_dollars_fp": []}
+  })";
+  const auto r = p.parse(kEmpty, 1000);
+  EXPECT_EQ(r.status, ParseStatus::Ok);
+  ASSERT_EQ(r.deltas.size(), 1u);  // the clear, and nothing else
+  EXPECT_EQ(r.deltas[0].action, Action::Clear);
+}
+
+TEST(KalshiParser, SubCentPriceIsMalformedNotRounded) {
+  // Kalshi lists some markets on a 0.0001 grid. This book has no slot for
+  // such a price, and rounding it into a neighbouring cent would put a
+  // level the venue never quoted in front of the analytics.
+  KalshiParser p;
+  constexpr std::string_view kFine = R"({
+    "type": "orderbook_snapshot", "sid": 1, "seq": 10,
+    "msg": {"market_ticker": "FED-26SEP-CUT",
+            "yes_dollars_fp": [["0.4512", "100.00"]]}
+  })";
+  EXPECT_EQ(p.parse(kFine, 1000).status, ParseStatus::Malformed);
+}
