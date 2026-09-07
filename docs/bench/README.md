@@ -14,6 +14,7 @@ companion voxel-engine project follows. No aspirational numbers.
 | [`allocator.md`](allocator.md) | Allocator benchmark: global heap vs Bloomberg bdlma | live-poly-60s |
 | [`book_reconstruction.md`](book_reconstruction.md) | Reconstructing a book, and proving it is the venue's book | btcusdt-recon |
 | [`cross_venue_lead.md`](cross_venue_lead.md) | Cross-venue lead: Binance against Coinbase | btc-xvenue, btc-xvenue-2, btc-eth-xvenue |
+| [`cross_venue_fomc.md`](cross_venue_fomc.md) | Cross-venue basis: the September 2026 FOMC on Kalshi and Polymarket | fomc-xvenue |
 | [`economics.md`](economics.md) | Crossed-book economics: methodology and numbers | synthetic |
 | [`extrapolation.md`](extrapolation.md) | Can a short capture stand in for a long one? | soak |
 | [`fanout.md`](fanout.md) | Subscription fan-out with slow consumers | synthetic |

@@ -1,0 +1,29 @@
+# Cross-venue registry: the September 2026 FOMC decision, quoted on both
+# venues. Pairing is by hand, as configs/contracts-live.toml requires:
+# each Kalshi outcome and its Polymarket question resolve on the same
+# FOMC meeting and both close 2026-09-16, verified against each venue
+# API on 2026-09-05.
+
+[[event]]
+id = "fed-sep-2026-cut-25"
+# Fed cuts 25 bps at the September 2026 FOMC: polymarket yes=0.0035 | kalshi KXFEDDECISION-26SEP-C25
+description = "Fed cuts 25 bps at the September 2026 FOMC"
+kalshi = "KXFEDDECISION-26SEP-C25"
+polymarket_token = "57748138085022719760345772310040703848567377822400132842014290209986511882046"
+polymarket_no_token = "28239418772633645184924651434956000849078365566842629564562475378531350731731"
+
+[[event]]
+id = "fed-sep-2026-no-change"
+# Fed holds at the September 2026 FOMC (0 bps): polymarket yes=0.495 | kalshi KXFEDDECISION-26SEP-H0
+description = "Fed holds at the September 2026 FOMC (0 bps)"
+kalshi = "KXFEDDECISION-26SEP-H0"
+polymarket_token = "5615282760875985231868508008056959876238536896643315063916840237042205273721"
+polymarket_no_token = "97050921740416192996389806693742575608111328819185493163189880975611314813724"
+
+[[event]]
+id = "fed-sep-2026-hike-25"
+# Fed hikes 25 bps at the September 2026 FOMC: polymarket yes=0.495 | kalshi KXFEDDECISION-26SEP-H25
+description = "Fed hikes 25 bps at the September 2026 FOMC"
+kalshi = "KXFEDDECISION-26SEP-H25"
+polymarket_token = "63842529068710005716169325380315470359047749786610778647370693404952498013178"
+polymarket_no_token = "2881957189963819690709899387312951271986076905757701114514025622922000576600"
