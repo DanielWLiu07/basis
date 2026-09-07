@@ -1,6 +1,6 @@
 # Things that broke, and how they were found
 
-Four defects that survived their own test suites. They are collected here
+Five defects that survived their own test suites. They are collected here
 because the interesting part of each is not the fix, which is usually a few
 lines, but the reason nothing caught it: in every case the code did exactly
 what it was written to do, reported success, and produced a plausible
@@ -130,11 +130,51 @@ rather than a bug.
 followed in this repo: prices are integers, and any comparison that decides
 whether money is on the table runs on the integer representation.
 
+## 5. A venue changed its wire format and every counter stayed green
+
+The Kalshi adapter was written against the documented `orderbook_delta`
+schema and verified offline, down to the RSA-PSS signature. It had never
+connected, because this repo had no account. When a key finally arrived the
+handshake worked on the first attempt, the feed reported 0 malformed and 0
+gaps, and the books were empty.
+
+Kalshi had migrated the channel. Snapshots now carry `yes_dollars_fp` and
+`no_dollars_fp` holding decimal strings (`["0.5100", "1200.50"]`) where the
+parser expected `yes` and `no` holding integer pairs. Deltas carry
+`price_dollars` and a signed, fractional `delta_fp` where the parser
+expected `price` and `delta` as integers.
+
+The rename alone would have been a loud failure. What made it silent was
+one line of defensive handling:
+
+```cpp
+if (field.error() == NO_SUCH_FIELD) {
+  return true;  // side absent entirely is a legal empty book
+}
+```
+
+Written for a market with no resting orders, it also covers a market whose
+field was renamed. Every snapshot parsed successfully into nothing. A live
+capture reported `kalshi 10 msgs 6 deltas 0 malformed` where the correct
+figure was 240 deltas.
+
+The fix accepts both wire forms, so committed captures still replay, and
+makes the absence loud: an empty Kalshi book still sends its side keys
+holding empty arrays, so keys missing under *every* known name is an
+unrecognised schema rather than an empty market, and is now `Malformed`.
+
+The lesson is the one this file keeps repeating in a new place. Integrity
+counters answer "did anything I recognised look wrong", not "did I
+recognise anything". No throughput number, no gap counter, and no
+malformed count could have caught this; only reading prices out of the
+book against a venue that was quoting could, and that meant pointing it at
+production.
+
 ## The pattern
 
 None of these produced an error. Each one produced a plausible number, and
-in three of the four cases the plausible number was *more* interesting than
-the truth - a 13:1 move ratio, a quiet market, 267 arbitrages. That is the
+in four of the five cases the plausible number was *more* interesting than
+the truth - a 13:1 move ratio, a quiet market, 267 arbitrages, a clean feed. That is the
 direction the errors ran, and it is why this repo leans on cross-checks
 that share no code with the thing being checked: an independent Python
 replay, a matching engine that recomputes the analytics by executing the
