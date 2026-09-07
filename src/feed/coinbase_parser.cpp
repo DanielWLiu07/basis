@@ -2,6 +2,7 @@
 
 #include "feed/decimal.h"
 #include "model/book_delta.h"
+#include "model/trade.h"
 
 namespace basis::feed {
 
@@ -9,7 +10,9 @@ namespace {
 
 using model::Action;
 using model::BookDelta;
+using model::Aggressor;
 using model::Side;
+using model::Trade;
 using model::Venue;
 
 // A level this engine cannot represent is skipped and counted, not treated
@@ -40,6 +43,47 @@ bool push_level(ParseResult& out, std::string_view market, Side side,
   d.size = size;
   d.ts_ns = recv_ns;
   out.deltas.push_back(d);
+  return true;
+}
+
+// The print carried by a ticker or match frame.
+//
+// Coinbase reports the MAKER's side: a frame with "side":"sell" means a
+// resting sell order was hit, so the aggressor was a buyer. The field is
+// inverted here rather than at every call site, because getting it
+// backwards flips the sign of any order-flow measure built on it and the
+// mistake is invisible in the data - both values are plausible.
+//
+// A frame without a price or size is not a trade. Coinbase publishes a
+// ticker for a product that has never traded, and its book fields are
+// absent too; that is an absence of data, not a broken message.
+bool push_trade(ParseResult& out, std::string_view market,
+                std::string_view price, std::string_view qty,
+                std::string_view maker_side, std::uint64_t trade_id,
+                std::int64_t recv_ns) {
+  int cents = 0;
+  std::int64_t size = 0;
+  switch (parse_cents(price, &cents)) {
+    case PriceParse::Ok: break;
+    case PriceParse::OutOfRange:
+      ++out.levels_unrepresentable;
+      return true;
+    case PriceParse::OffGrid:
+    case PriceParse::NotANumber:
+      return false;
+  }
+  if (!to_scaled_size(qty, &size)) return false;
+  Trade t;
+  t.venue = Venue::Coinbase;
+  t.market = market;
+  t.price_cents = cents;
+  t.size = size;
+  t.trade_id = trade_id;
+  t.ts_ns = recv_ns;
+  if (maker_side == "sell")      t.aggressor = Aggressor::Buy;
+  else if (maker_side == "buy")  t.aggressor = Aggressor::Sell;
+  else                           t.aggressor = Aggressor::Unknown;
+  out.trades.push_back(t);
   return true;
 }
 
@@ -143,9 +187,54 @@ ParseResult CoinbaseParser::parse(std::string_view raw, std::int64_t recv_ns,
     return out;
   }
 
-  if (type != "ticker") {
-    out.status = ParseStatus::Ignored;  // heartbeat, match, other channels
+  // The match channel is trades and nothing else: no book fields, so it
+  // produces a print and no deltas.
+  if (type == "match" || type == "last_match") {
+    std::string_view px, sz, maker_side;
+    if (root["price"].get_string().get(px) != simdjson::SUCCESS ||
+        root["size"].get_string().get(sz) != simdjson::SUCCESS) {
+      out.status = ParseStatus::Ignored;
+      return out;
+    }
+    if (root["side"].get_string().get(maker_side) != simdjson::SUCCESS) {
+      maker_side = {};
+    }
+    std::uint64_t tid = 0;
+    if (root["trade_id"].get_uint64().get(tid) != simdjson::SUCCESS) tid = 0;
+    if (!push_trade(out, product, px, sz, maker_side, tid, recv_ns)) {
+      out.trades.clear();
+      out.status = ParseStatus::Malformed;
+      return out;
+    }
+    out.status = ParseStatus::Ok;
     return out;
+  }
+
+  if (type != "ticker") {
+    out.status = ParseStatus::Ignored;  // heartbeat, other channels
+    return out;
+  }
+
+  // A ticker is BOTH a print and a touch update, which is why the two
+  // live in separate vectors on one result. The print is emitted first
+  // and independently: a ticker whose book fields are missing still
+  // carries a trade, and dropping it because the touch was absent was
+  // throwing away half of what the frame says.
+  {
+    std::string_view px, last_size, maker_side;
+    if (root["price"].get_string().get(px) == simdjson::SUCCESS &&
+        root["last_size"].get_string().get(last_size) == simdjson::SUCCESS) {
+      if (root["side"].get_string().get(maker_side) != simdjson::SUCCESS) {
+        maker_side = {};
+      }
+      std::uint64_t tid = 0;
+      if (root["trade_id"].get_uint64().get(tid) != simdjson::SUCCESS) tid = 0;
+      if (!push_trade(out, product, px, last_size, maker_side, tid, recv_ns)) {
+        out.trades.clear();
+        out.status = ParseStatus::Malformed;
+        return out;
+      }
+    }
   }
 
   // A ticker for a product that has never traded omits the book fields
@@ -157,7 +246,8 @@ ParseResult CoinbaseParser::parse(std::string_view raw, std::int64_t recv_ns,
       root["best_ask"].get_string().get(ask_px) == simdjson::SUCCESS &&
       root["best_ask_size"].get_string().get(ask_sz) == simdjson::SUCCESS;
   if (!has_book) {
-    out.status = ParseStatus::Ignored;
+    // No touch, but the print above may still have landed.
+    out.status = out.trades.empty() ? ParseStatus::Ignored : ParseStatus::Ok;
     return out;
   }
 

@@ -7,6 +7,7 @@
 using basis::feed::CoinbaseParser;
 using basis::feed::ParseStatus;
 using basis::model::Action;
+using basis::model::Aggressor;
 using basis::model::OrderBook;
 using basis::model::Side;
 using basis::model::Venue;
@@ -31,6 +32,103 @@ TEST(CoinbaseParser, TickerBecomesBothSidesOfTheTouch) {
   EXPECT_EQ(r.deltas[1].side, Side::Ask);
   EXPECT_EQ(r.deltas[1].price_cents, 6'374'891);
   EXPECT_EQ(r.deltas[1].ts_ns, 1000);
+}
+
+// ----- prints ---------------------------------------------------------------
+//
+// A ticker frame is both a trade and a touch update. The engine read only
+// the touch, which is what made it a book engine rather than a
+// market-data one: it carried what the book would do and never what it
+// did.
+
+TEST(CoinbaseParser, TickerCarriesAPrintAsWellAsTheTouch) {
+  CoinbaseParser p;
+  const auto r = p.parse(
+      R"({"type":"ticker","sequence":134071694194,"product_id":"BTC-USD",)"
+      R"("price":"63748.91","last_size":"0.00312","side":"sell",)"
+      R"("trade_id":712345678,)"
+      R"("best_bid":"63748.90","best_bid_size":"0.05",)"
+      R"("best_ask":"63748.91","best_ask_size":"0.01"})", 1000);
+  ASSERT_EQ(r.status, ParseStatus::Ok);
+  // Both halves, from one message.
+  EXPECT_EQ(r.deltas.size(), 2u);
+  ASSERT_EQ(r.trades.size(), 1u);
+  const auto& t = r.trades[0];
+  EXPECT_EQ(t.venue, Venue::Coinbase);
+  EXPECT_EQ(t.market, "BTC-USD");
+  EXPECT_EQ(t.price_cents, 6'374'891);
+  EXPECT_EQ(t.size, 312'000);          // 0.00312 scaled by 1e8
+  EXPECT_EQ(t.trade_id, 712345678u);
+  EXPECT_EQ(t.ts_ns, 1000);
+}
+
+TEST(CoinbaseParser, TheAggressorIsTheOppositeOfTheSideCoinbaseReports) {
+  // Coinbase reports the MAKER's side. "sell" means a resting sell was
+  // hit, so the taker was a buyer. Getting this backwards flips the sign
+  // of any order-flow measure built on it, and both values look plausible
+  // in the data, so it is worth its own check rather than a comment.
+  CoinbaseParser p;
+  const auto hit_a_sell = p.parse(
+      R"({"type":"match","product_id":"BTC-USD","price":"63748.91",)"
+      R"("size":"0.01","side":"sell","trade_id":1})", 1);
+  ASSERT_EQ(hit_a_sell.trades.size(), 1u);
+  EXPECT_EQ(hit_a_sell.trades[0].aggressor, Aggressor::Buy);
+
+  CoinbaseParser q;
+  const auto hit_a_buy = q.parse(
+      R"({"type":"match","product_id":"BTC-USD","price":"63748.91",)"
+      R"("size":"0.01","side":"buy","trade_id":2})", 1);
+  ASSERT_EQ(hit_a_buy.trades.size(), 1u);
+  EXPECT_EQ(hit_a_buy.trades[0].aggressor, Aggressor::Sell);
+}
+
+TEST(CoinbaseParser, AVenueThatDoesNotSayWhoAggressedLeavesItUnknown) {
+  // Unknown is a real state, not a default to tidy away. A guessed
+  // aggressor corrupts order-flow imbalance silently; an honest Unknown
+  // lets a consumer report coverage.
+  CoinbaseParser p;
+  const auto r = p.parse(
+      R"({"type":"match","product_id":"BTC-USD","price":"63748.91",)"
+      R"("size":"0.01","trade_id":3})", 1);
+  ASSERT_EQ(r.trades.size(), 1u);
+  EXPECT_EQ(r.trades[0].aggressor, Aggressor::Unknown);
+}
+
+TEST(CoinbaseParser, AMatchIsAPrintAndNotABookUpdate) {
+  // The match channel carries no book fields. A trade is an event at a
+  // price, not a change to a level, and it must not reach the book.
+  CoinbaseParser p;
+  const auto r = p.parse(
+      R"({"type":"match","trade_id":9,"product_id":"BTC-USD",)"
+      R"("price":"63748.91","size":"0.02","side":"buy"})", 7);
+  ASSERT_EQ(r.status, ParseStatus::Ok);
+  EXPECT_TRUE(r.deltas.empty());
+  ASSERT_EQ(r.trades.size(), 1u);
+  EXPECT_EQ(r.trades[0].size, 2'000'000);
+}
+
+TEST(CoinbaseParser, ATickerWithNoTouchStillYieldsItsPrint) {
+  // The book fields and the print are independent halves of the frame.
+  // Requiring the touch to be present threw the trade away with it.
+  CoinbaseParser p;
+  const auto r = p.parse(
+      R"({"type":"ticker","product_id":"BTC-USD","price":"63748.91",)"
+      R"("last_size":"0.5","side":"buy","trade_id":11})", 3);
+  ASSERT_EQ(r.status, ParseStatus::Ok);
+  EXPECT_TRUE(r.deltas.empty());
+  ASSERT_EQ(r.trades.size(), 1u);
+  EXPECT_EQ(r.trades[0].price_cents, 6'374'891);
+}
+
+TEST(CoinbaseParser, ATickerForSomethingThatHasNeverTradedIsStillIgnored) {
+  // No book, no print: an absence of data, not a broken message. This is
+  // the case the print path must not turn into a spurious trade.
+  CoinbaseParser p;
+  const auto r = p.parse(
+      R"({"type":"ticker","product_id":"BTC-USD"})", 3);
+  EXPECT_EQ(r.status, ParseStatus::Ignored);
+  EXPECT_TRUE(r.deltas.empty());
+  EXPECT_TRUE(r.trades.empty());
 }
 
 TEST(CoinbaseParser, SnapshotLeadsWithClearSoAReconnectRebuildsTheBook) {

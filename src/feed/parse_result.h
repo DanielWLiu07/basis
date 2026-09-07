@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "model/book_delta.h"
+#include "model/trade.h"
 
 namespace basis::feed {
 
@@ -24,9 +25,17 @@ enum class ParseStatus {
 struct ParseResult {
   explicit ParseResult(
       std::pmr::memory_resource* mr = std::pmr::get_default_resource())
-      : deltas(mr) {}
+      : deltas(mr), trades(mr) {}
 
   std::pmr::vector<model::BookDelta> deltas;
+  // Prints carried by the same message. Separate from deltas because a
+  // trade is an event at a price rather than a change to a level, and a
+  // consumer of one usually does not want the other: the book path would
+  // have to skip trades on every update, and a trade tape would have to
+  // skip levels. One wire message can carry both - a Coinbase ticker is a
+  // print AND a touch update - which is why they are two vectors and not
+  // a variant.
+  std::pmr::vector<model::Trade> trades;
   ParseStatus status = ParseStatus::Ignored;
   // True when stream integrity broke (sequence gap). The parser has already
   // prepended a Clear delta so the stale book cannot survive; the live feed
