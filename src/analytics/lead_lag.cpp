@@ -154,7 +154,8 @@ LeadLagResult CrossCorrelationEstimator::estimate() const {
                               config_.bootstrap_lag_halfwidth);
 
   std::mt19937 engine(config_.bootstrap_seed);
-  std::vector<double> boot_a(static_cast<std::size_t>(num_blocks) * block);
+  std::vector<double> boot_a(static_cast<std::size_t>(num_blocks) *
+                             static_cast<std::size_t>(block));
   std::vector<double> boot_b(boot_a.size());
   std::vector<double> leads;
   leads.reserve(static_cast<std::size_t>(config_.bootstrap_resamples));

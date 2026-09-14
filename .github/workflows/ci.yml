@@ -32,7 +32,7 @@ jobs:
         # up fails for reasons unrelated to this repo.
         run: python3 tests/test_contracts_script.py
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_WERROR=ON
       - name: Build
         run: cmake --build build -j
       - name: Test
@@ -65,7 +65,7 @@ jobs:
             brew install boost openssl@3
           fi
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_ENABLE_NET=ON
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_ENABLE_NET=ON -DBASIS_WERROR=ON
       - name: Build
         run: cmake --build build -j
       - name: Test
@@ -89,7 +89,7 @@ jobs:
       - name: Install BDE
         run: brew install bde
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_ENABLE_BDE=ON
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_ENABLE_BDE=ON -DBASIS_WERROR=ON
       - name: Build
         run: cmake --build build -j
       - name: Test
@@ -116,7 +116,7 @@ jobs:
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug ${{ matrix.flags }}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug ${{ matrix.flags }} -DBASIS_WERROR=ON
       - name: Build
         run: cmake --build build -j
       - name: Test
@@ -155,7 +155,7 @@ jobs:
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
       - name: Configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBASIS_WERROR=ON
       - name: Build
         run: cmake --build build -j
       - name: Gate

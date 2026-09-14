@@ -101,7 +101,9 @@ EventStudyResult EventStudyEstimator::estimate() const {
     mids.reserve(samples_.size());
     for (const auto& s : samples_) mids.push_back(s.a);
     const std::size_t mid = mids.size() / 2;
-    std::nth_element(mids.begin(), mids.begin() + mid, mids.end());
+    std::nth_element(mids.begin(),
+                     mids.begin() + static_cast<std::ptrdiff_t>(mid),
+                     mids.end());
     move_cents = mids[mid] * config_.move_bps / 10'000.0;
   }
   result.move_cents_applied = move_cents;

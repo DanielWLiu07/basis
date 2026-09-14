@@ -275,7 +275,13 @@ HayashiYoshidaReport HayashiYoshidaEstimator::analyze() const {
   leads.reserve(static_cast<std::size_t>(config_.bootstrap_resamples));
   ratios.reserve(static_cast<std::size_t>(config_.bootstrap_resamples));
   for (int r = 0; r < config_.bootstrap_resamples; ++r) {
-    for (auto& d : draw) d = rng::uniform_int(engine, 0, blocks - 1);
+    // uniform_int returns int64; the draw indexes `blocks`, so the
+    // value always fits an int. Explicit, because an implicit
+    // narrowing here would stop being harmless the day `blocks`
+    // widens.
+    for (auto& d : draw) {
+      d = static_cast<int>(rng::uniform_int(engine, 0, blocks - 1));
+    }
     // A window that excludes zero must not silently fall back to it, so
     // the seed lag is one that is actually inside the window.
     double top = -std::numeric_limits<double>::infinity();

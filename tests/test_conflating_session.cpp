@@ -156,12 +156,12 @@ TEST(ConflatingSession, SlowSubscriberDoesNotStallThePublisher) {
 
 TEST(ConflatingSession, ConcurrentPublishersAndSubscribersStayConsistent) {
   ConflatingSession s;
-  constexpr int kSubscribers = 8;
+  constexpr std::size_t kSubscribers = 8;
   constexpr int kPerPublisher = 5'000;
   constexpr int kPublishers = 4;
   std::vector<ConflatingSession::SubscriberId> ids;
   std::vector<std::atomic<int>> counts(kSubscribers);
-  for (int i = 0; i < kSubscribers; ++i) {
+  for (std::size_t i = 0; i < kSubscribers; ++i) {
     const auto id = s.add_subscriber();
     ids.push_back(id);
     s.subscribe_for(id, "fed", "mid",
@@ -170,7 +170,7 @@ TEST(ConflatingSession, ConcurrentPublishersAndSubscribersStayConsistent) {
 
   std::atomic<bool> running{true};
   std::vector<std::thread> drainers;
-  for (int i = 0; i < kSubscribers; ++i) {
+  for (std::size_t i = 0; i < kSubscribers; ++i) {
     drainers.emplace_back([&, i] {
       while (running) s.drain(ids[i]);
       s.drain(ids[i]);  // final sweep after publishers stop
@@ -261,7 +261,7 @@ TEST(ConflatingSession, JoiningDuringAPublishStormNeverMissesTheFinalValue) {
   // published value, whichever side of the fan-out its join landed on.
   ConflatingSession s;
   constexpr int kUpdates = 20'000;
-  constexpr int kJoiners = 16;
+  constexpr std::size_t kJoiners = 16;
 
   std::atomic<bool> publishing{true};
   std::thread publisher([&] {
@@ -275,7 +275,7 @@ TEST(ConflatingSession, JoiningDuringAPublishStormNeverMissesTheFinalValue) {
   std::vector<std::atomic<double>> last(kJoiners);
   std::vector<std::thread> joiners;
   std::mutex ids_mutex;
-  for (int j = 0; j < kJoiners; ++j) {
+  for (std::size_t j = 0; j < kJoiners; ++j) {
     joiners.emplace_back([&, j] {
       const auto id = s.add_subscriber();
       {
@@ -297,7 +297,7 @@ TEST(ConflatingSession, JoiningDuringAPublishStormNeverMissesTheFinalValue) {
     for (auto id : ids) s.drain(id);
   }
 
-  for (int j = 0; j < kJoiners; ++j) {
+  for (std::size_t j = 0; j < kJoiners; ++j) {
     EXPECT_DOUBLE_EQ(last[j].load(), static_cast<double>(kUpdates))
         << "joiner " << j << " did not end on the final value";
   }
@@ -483,10 +483,10 @@ TEST(ConflatingSession, EntitlementCountersAreExactUnderConcurrentDrains) {
   // this is the multithreaded test that exercises it.
   ConflatingSession s;
   s.set_entitlements(E::Restricted);
-  constexpr int kSubs = 8;
+  constexpr std::size_t kSubs = 8;
   constexpr int kUpdates = 2'000;
   std::vector<ConflatingSession::SubscriberId> ids;
-  for (int i = 0; i < kSubs; ++i) {
+  for (std::size_t i = 0; i < kSubs; ++i) {
     const auto id = s.add_subscriber();
     ids.push_back(id);
     // Half entitled, half not: the unentitled half drives the withheld
@@ -497,7 +497,7 @@ TEST(ConflatingSession, EntitlementCountersAreExactUnderConcurrentDrains) {
 
   std::atomic<bool> running{true};
   std::vector<std::thread> drainers;
-  for (int i = 0; i < kSubs; ++i) {
+  for (std::size_t i = 0; i < kSubs; ++i) {
     drainers.emplace_back([&, i] {
       while (running) s.drain(ids[i]);
       s.drain(ids[i]);

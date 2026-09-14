@@ -186,9 +186,9 @@ int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
   const double venue_span_s =
       static_cast<double>(records.back().recv_ns - records.front().recv_ns) /
       1e9;
-  const double engine_rate = ms > 0.0 ? records.size() * 1000.0 / ms : 0.0;
+  const double engine_rate = ms > 0.0 ? static_cast<double>(records.size()) * 1000.0 / ms : 0.0;
   const double venue_rate =
-      venue_span_s > 0.0 ? records.size() / venue_span_s : 0.0;
+      venue_span_s > 0.0 ? static_cast<double>(records.size()) / venue_span_s : 0.0;
 
   std::string venues;
   for (int v = 0; v < basis::model::kVenueCount; ++v) {
@@ -208,7 +208,7 @@ int run_ingest_bench_cmd(const std::vector<std::string_view>& args) {
   std::printf("INGEST engine_ms=%.1f engine_msgs_per_sec=%.0f "
               "engine_deltas_per_sec=%.0f headroom=%.0fx\n",
               ms, engine_rate,
-              ms > 0.0 ? deltas * 1000.0 / ms : 0.0,
+              ms > 0.0 ? static_cast<double>(deltas) * 1000.0 / ms : 0.0,
               venue_rate > 0.0 ? engine_rate / venue_rate : 0.0);
 
   // The guard the old version lacked. Zero deltas means the timed loop
