@@ -314,3 +314,92 @@ No exceptions on the hot path. Parsers return status enums; file and config
 loaders return `std::optional` or a result struct with an error string.
 Malformed input is counted and reported, never silently dropped (PLAN.md's
 reliability rule: every dropped message is a number, not a hope).
+
+## Execution, and the hot path
+
+`exec/` is the other direction. It is a
+price-time-priority matching engine whose ladder is a flat 99-slot array
+because prediction-market prices are integer cents, and it exists for
+more than completeness: the arbitrage numbers the analytics report are
+recomputed by executing the same sweeps through it as order flow, so the
+two must agree (`docs/bench/matching_engine.md`).
+
+The hot parse-and-normalize path is zero-copy (market ids are views into
+the parser buffer) and every allocation site draws from an injectable
+`std::pmr` resource. Bloomberg's open-source BDE (`bdlma`) arenas plug
+into those seams; measured against the global heap they came out at
+parity, because the zero-copy path leaves only 1-2 allocations per message
+(`docs/bench/allocator.md`), so the heap default ships. The consumer
+interface mirrors both halves of Bloomberg's BLPAPI model.
+
+**Subscription** is push: a consumer names the topics it cares about and
+values arrive, conflated, so a slow one receives the current price rather
+than a backlog. **Request** is pull: it asks for a topic's current value
+and gets it immediately, which is what a screen needs when it opens
+instead of waiting for the next tick.
+
+Entitlements are enforced identically on both, which is the point rather
+than a detail - a pull path that skipped the check would be a way around
+it, and that is how licensed data leaks in practice. A refusal is also
+deliberately indistinguishable from a topic that does not exist, because
+"that exists but you may not see it" is itself an answer the caller was
+not entitled to, and telling them apart would let a caller enumerate the
+topic space. Both outcomes are counted, so "nobody was served what they
+should not have been" is evidenced rather than asserted.
+ Internal
+ingest-to-signal latency is measured by deterministic replay (network
+jitter removed) and reported in percentiles.
+
+Note: this project uses Bloomberg's open-source libraries and API design. It
+does not use Bloomberg data, which is licensed and not redistributable. The
+only market data here comes from Kalshi's and Polymarket's public APIs.
+
+## Layout
+
+One directory per library, and the dependency order below is enforced
+rather than described: `scripts/levelize.py` runs in CI before the build
+and fails on a cycle, on a package dependency that is not declared, or on
+a directory that spans two levels.
+
+```
+level 1  src/core/       logging, clocks, hashing, counting allocator, portable rng
+         src/model/      canonical schema: venue, side, order book, unified book
+         src/alloc/      Bloomberg bdlma arenas behind a std::pmr seam
+
+level 2  src/feed/       venue parsers (Kalshi, Polymarket, Binance, Coinbase),
+                         book sequencer, feedlog capture format
+         src/normalize/  contract registry, event router (NO-side fold),
+                         cross-venue crypto instrument naming
+         src/analytics/  divergence, cross-correlation and
+                         Hayashi-Yoshida lead-lag, event study
+         src/api/        BLPAPI-style interface: subscription + request
+         src/exec/       price-time-priority matching engine, order index
+         src/net/        TLS WebSocket client + Kalshi request signing
+
+level 3  src/bench/      replay harness, latency recorder, synthetic sessions,
+                         stats reporting
+         src/feed_live/  WSS adapters per venue (needs net/; BASIS_ENABLE_NET)
+
+level 4  src/cli/        one function per subcommand, grouped by what it
+                         needs: microbenchmarks, capture analysis, live
+                         sockets. The composition root, and the only
+                         package allowed to see everything
+
+         src/main.cpp    29 lines: maps a subcommand name onto a function
+```
+
+`feed/` and `feed_live/` were one directory until `levelize.py` pointed
+out that it spanned two levels: the offline parse path has no business
+pulling in Boost and OpenSSL, and now it does not. `cli/` is the same
+idea applied to `main.cpp`, which had reached 1,400 lines and three times
+the size of any other file here.
+
+```
+tests/          GoogleTest unit and integration tests
+fuzz/           libFuzzer targets + corpus for the parsers and registry
+configs/        contract registries (real + synthetic)
+cmake/          dependency, warning, and sanitizer toolchain fragments
+docs/           design notes, venue API notes, benchmark artifacts
+scripts/        CI performance gate, levelization check, benchmark runner,
+                README figure generator
+```

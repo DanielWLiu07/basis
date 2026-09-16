@@ -22,19 +22,22 @@ so `--speed banana` silently replayed unpaced.
 
 ## The three real gaps, ranked
 
-### 1. Kalshi has never run live
+### 1. ~~Kalshi has never run live~~ CLOSED
 
-The blocker is credentials, not code. The adapter exists and is verified
-offline down to the RSA-PSS signature. `configs/contracts.toml` maps 14
-cross-venue contracts. None of it has ever been exercised against the
-venue, so every cross-venue result in this repo is Binance/Coinbase - the
-substitute pairing, chosen because it is public on both sides.
+This said the adapter was verified offline and had never been exercised
+against the venue, so every cross-venue result was Binance/Coinbase.
 
-The cost is a free account and an RSA key. It is the only item on this
-list that cannot be done by writing code, and it is the one that unlocks
-the most: with it, the fee-aware arbitrage backtester runs on a real
-both-venue capture instead of a synthetic session, and the repo's stated
-thesis becomes a measured result rather than a described one.
+It is done. A key arrived, the handshake worked first time, and the books
+came back empty - Kalshi had migrated to decimal dollar strings under new
+field names and the parser read the missing fields as a legal empty book.
+Every snapshot parsed, every book was empty, and the malformed counter
+read zero. Fixed in #69, and `docs/bench/fomc-xvenue.feedlog.gz` is the
+committed capture that came out of it: 218 Kalshi records quoting the same
+event as Polymarket. The failure is written up in postmortems.md.
+
+Leaving the heading struck through rather than deleting it: this entry is
+why the capture exists, and a roadmap that only ever shows what is left
+loses the record of what a gap cost to close.
 
 ### 2. This is a book engine, not a market-data engine
 
